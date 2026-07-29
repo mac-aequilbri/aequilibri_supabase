@@ -415,6 +415,31 @@ DOMAIN_LABELS + REGIONS.**
    ones — mapper fallout found and fixed (absent-table 403). Fan-out script
    now covers DEACTIVATED orgs' DBs too (schema-current for reactivation).
 
+---
+
+## Phase 5 — Data migration execution + validation (2026-07-29) — COMPLETE
+
+Full detail in **docs/migration-verification-2026-07-29.md**. Summary:
+- **Control base → control DB executed** (7 orgs merged into the runtime
+  registry, 16 team, 3 connections, 66 catalog rows).
+- **Meridian (~19.6k rows) and Didi (~1.6k rows) fully materialised in their
+  OWN tenant databases** (provisioned + RLS-pinned + activated first — the
+  §2b runbook end-to-end). Final passes: zero skips, side-by-side counts
+  exact on every present table; both orgs' windows verified serving from
+  their databases through the app.
+- **Didi's predicted drift found and reconciled in the map** (10 divergences:
+  vendors-in-ORGANISATIONS, month-label periods, Sequence ordering,
+  Risk_Name/Probability, split contact names, legacy outcome columns →
+  PlatJob.meta, richer decisions register, codeless learning rules, ISSUES
+  extras → context JSON, missing job codes). Mover hardening that fell out:
+  noCreatedAt models, column-width slicing, ruleCode/description fallbacks.
+- **Accepted-loss list** documented for owner sign-off (thin/derivable
+  fields; PROCUREMENT Actual_Date/Invoice_Reference/Notes flagged as the
+  ones worth a second look). Meridian job-status vocabulary flagged as a
+  data-QA decision.
+- Attachments: zero binaries on either base (re-scan at cutover).
+- demo-walk/dev orgs untouched; live Airtable untouched (read-only PAT use).
+
 ### Known caveats carried forward
 1. **Portal-token lookup** searches the default tenant DB only — before any
    org WITH PORTAL TOKENS is activated onto its own database, token

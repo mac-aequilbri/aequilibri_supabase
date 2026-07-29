@@ -106,7 +106,7 @@ for (const t of TABLES) {
       const v = pgValue(spec, rec.fields);
       if (v !== undefined) data[spec.pg] = v;
     }
-    Object.assign(data, t.pgDerive ? t.pgDerive(rec.fields) : {});
+    Object.assign(data, t.pgDerive ? t.pgDerive(rec.fields, rec) : {});
     let unresolved = false;
     for (const l of t.links) {
       const v = rec.fields[l.air];
@@ -139,7 +139,7 @@ for (const t of TABLES) {
         updated++;
       } else {
         const row = await prisma[t.model].create({
-          data: { ...data, orgId: orgRow.id, airtableRecordId: rec.id, createdAt: new Date(rec.createdTime) },
+          data: { ...data, orgId: orgRow.id, airtableRecordId: rec.id, ...(t.noCreatedAt ? {} : { createdAt: new Date(rec.createdTime) }) },
         });
         map.set(rec.id, row.id);
         created++;

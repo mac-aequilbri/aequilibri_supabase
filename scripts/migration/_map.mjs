@@ -31,6 +31,19 @@ export const REVERSE_STATUS_MAPS = Object.fromEntries(
 
 const f = (pg, air, kind = "str", extra = {}) => ({ pg, air, kind, ...extra });
 
+/** Month labels ("June 2025") and canonical "YYYY-MM" both normalize to
+ *  YYYY-MM; rows with no usable period fall back to the record's Airtable
+ *  createdTime month (Didi drift — 37 period-less CASHFLOWS rows). */
+export function toPeriod(v, fallbackIso) {
+  const s = String(v ?? "").trim();
+  if (/^\d{4}-\d{2}$/.test(s)) return s;
+  if (s) {
+    const d = new Date(s);
+    if (!isNaN(d)) return d.toISOString().slice(0, 7);
+  }
+  return String(fallbackIso ?? "").slice(0, 7);
+}
+
 export const TABLES = [
   {
     key: "contact", air: "CONTACTS", model: "platContact",
@@ -39,18 +52,47 @@ export const TABLES = [
       f("role", "Role"), f("notes", "Notes"),
     ],
     links: [],
+    // Didi drift: contacts split into First_Name/Last_Name (+LinkedIn).
+    deriveReads: ["First_Name", "Last_Name", "LinkedIn"],
+    pgDerive: (fields) => {
+      const out = {};
+      const joined = [fields.First_Name, fields.Last_Name].filter(Boolean).join(" ");
+      if (!fields.Contact_Name && joined) out.name = joined;
+      if (fields.LinkedIn) out.notes = [fields.Notes, `LinkedIn: ${fields.LinkedIn}`].filter(Boolean).join(" · ");
+      return out;
+    },
     // PG-only: type/company/isActive have no CONTACTS field — lossy toward Air.
   },
   {
     key: "job", air: "JOBS", model: "platJob",
+    // PlatJob.code is required with no default and JOBS has no code column —
+    // derive a stable, unique code from the Airtable rec id (idempotent).
     fields: [
       f("name", "Job_Name"), f("summary", "Description"), f("status", "Status"),
       f("budgetTotal", "Estimated_Value", "num"),
       f("engagementType", "Engagement_Type"),
       f("scopeChangesCount", "Scope_Changes_Count", "num"),
+      f("targetEndDate", "Target_Completion", "date"),
     ],
     links: [],
-    // PG-only: code/healthScore/completionPct/dates/meta — Airtable JOBS is
+    // Didi drift: legacy outcome-tracking columns ride in PlatJob.meta JSON so
+    // the history survives verbatim (no dedicated PG columns by design).
+    deriveReads: ["Outcome", "Date_Estimated", "Date_Completed", "Actual_Value", "Variance_Percent", "Estimated_Summary", "Actual_Summary", "Root_Cause_of_Variance", "Learning_Rule_Candidate"],
+    pgDerive: (fields, rec) => {
+      const out = { code: `A-${String(rec?.id ?? "").slice(-6).toUpperCase()}` };
+      // Engagement types arrive as display labels on live bases ("Short Job",
+      // "Long Project") — the app switches on the snake_case union.
+      if (fields.Engagement_Type) {
+        out.engagementType = String(fields.Engagement_Type).toLowerCase().replace(/[\s-]+/g, "_").slice(0, 30);
+      }
+      const legacy = {};
+      for (const k of ["Outcome", "Date_Estimated", "Date_Completed", "Actual_Value", "Variance_Percent", "Estimated_Summary", "Actual_Summary", "Root_Cause_of_Variance", "Learning_Rule_Candidate"]) {
+        if (fields[k] !== undefined && fields[k] !== "") legacy[k] = fields[k];
+      }
+      if (Object.keys(legacy).length) out.meta = JSON.stringify({ airtableLegacy: legacy });
+      return out;
+    },
+    // PG-only: code/healthScore/completionPct/startDate — Airtable JOBS is
     // thinner than PlatJob by design (see audit §3); lossy toward Air.
   },
   {
@@ -60,6 +102,15 @@ export const TABLES = [
       f("status", "Status"), f("milestone", "Next_Milestone"),
     ],
     links: [],
+    // Didi drift: planning columns survive in notes as a labelled block.
+    deriveReads: ["Priority", "Track", "Start_Date", "Target_Date", "Current_State"],
+    pgDerive: (fields) => {
+      const bits = [];
+      for (const k of ["Priority", "Track", "Start_Date", "Target_Date", "Current_State"]) {
+        if (fields[k] !== undefined && fields[k] !== "") bits.push(`${k}: ${fields[k]}`);
+      }
+      return bits.length ? { notes: bits.join(" · ") } : {};
+    },
   },
   {
     key: "phase", air: "PHASES", model: "platConPhase",
@@ -68,8 +119,15 @@ export const TABLES = [
       f("completionPct", "Completion_Pct", "num"), f("sortOrder", "Sort_Order", "num"),
       f("isAiDraft", "Is_AI_Draft", "bool"), f("approvedBy", "Approved_By"),
       f("rag", "RAG"),
+      f("startDate", "Start_Date", "date"), f("endDate", "End_Date", "date"),
     ],
     links: [{ pg: "jobId", air: "Job", target: "job" }],
+    // Didi drift: their PHASES orders by Sequence (no Sort_Order column).
+    deriveReads: ["Sequence"],
+    pgDerive: (fields) =>
+      fields.Sort_Order === undefined && typeof fields.Sequence === "number"
+        ? { sortOrder: fields.Sequence }
+        : {},
   },
   {
     key: "document", air: "DOCUMENTS", model: "platDocument",
@@ -105,6 +163,25 @@ export const TABLES = [
       f("createdByAi", "Created_By_AI", "bool"),
     ],
     links: [{ pg: "jobId", air: "Job", target: "job" }],
+    // Didi drift: Risk_Name instead of Risk; Probability (High/Medium/Low
+    // select) instead of numeric Likelihood; Category/RAG/Notes preserved in
+    // the description as a labelled suffix.
+    deriveReads: ["Risk_Name", "Probability", "Category", "RAG", "Notes"],
+    pgDerive: (fields) => {
+      const out = {};
+      if (!fields.Risk && fields.Risk_Name) out.description = String(fields.Risk_Name);
+      if (fields.Likelihood === undefined && fields.Probability) {
+        out.likelihood = { High: 4, Medium: 3, Low: 2 }[String(fields.Probability)] ?? 3;
+      }
+      const extra = [];
+      for (const k of ["Category", "RAG", "Notes"]) {
+        if (fields[k]) extra.push(`${k}: ${fields[k]}`);
+      }
+      if (extra.length) {
+        out.description = `${out.description ?? String(fields.Risk ?? "")}\n[${extra.join(" · ")}]`;
+      }
+      return out;
+    },
   },
   {
     key: "decision", air: "DECISIONS", model: "platDecision",
@@ -115,7 +192,27 @@ export const TABLES = [
     ],
     links: [{ pg: "jobId", air: "Job", target: "job" }],
     airDerive: (row) => ({ Decision_Name: String(row.description ?? "").slice(0, 120) || "Untitled decision" }),
-    // PG-only: alternatives/category/madeBy/source* — lossy toward Air.
+    // Didi drift: richer decision register — recover what has PG columns,
+    // append the register-only context to rationale as a labelled block.
+    deriveReads: ["Decision_Name", "Decision_Made", "Alternatives_Rejected", "Decision_Type", "Domain", "Context", "Reversibility", "Confidence", "Notes"],
+    pgDerive: (fields) => {
+      const out = {};
+      if (!fields.Decision_Description) {
+        const desc = fields.Decision_Made || fields.Decision_Name;
+        if (desc) out.description = String(desc);
+      }
+      if (fields.Alternatives_Rejected) out.alternatives = String(fields.Alternatives_Rejected);
+      const cat = fields.Decision_Type || fields.Domain;
+      if (cat) out.category = String(cat).slice(0, 100);
+      const extra = [];
+      for (const k of ["Context", "Reversibility", "Confidence", "Notes"]) {
+        if (fields[k] !== undefined && fields[k] !== "") extra.push(`${k}: ${fields[k]}`);
+      }
+      if (extra.length) {
+        out.rationale = [fields.Rationale, `[${extra.join(" · ")}]`].filter(Boolean).join("\n");
+      }
+      return out;
+    },
   },
   {
     key: "action", air: "ISSUES", model: "platActionHub",
@@ -135,9 +232,19 @@ export const TABLES = [
     // owner rides in Notes as "Owner: <name>" (fieldMaps convention).
     airDerive: (row) =>
       row.owner && String(row.owner).trim() ? { Notes: `Owner: ${String(row.owner).trim()}` } : {},
+    // Didi drift: Trigger_Condition/Completion_Date + free-form Notes survive
+    // in the context JSON column (recordWriter's context field).
+    deriveReads: ["Trigger_Condition", "Completion_Date", "Notes"],
     pgDerive: (fields) => {
+      const out = {};
       const m = /^Owner:\s*(.+)$/.exec(String(fields.Notes ?? ""));
-      return m ? { owner: m[1] } : {};
+      if (m) out.owner = m[1];
+      const legacy = {};
+      if (fields.Trigger_Condition) legacy.triggerCondition = fields.Trigger_Condition;
+      if (fields.Completion_Date) legacy.completionDate = fields.Completion_Date;
+      if (fields.Notes && !m) legacy.notes = fields.Notes;
+      if (Object.keys(legacy).length) out.context = JSON.stringify({ airtableLegacy: legacy });
+      return out;
     },
   },
   {
@@ -185,7 +292,7 @@ export const TABLES = [
   {
     key: "procurement", air: "PROCUREMENT", model: "platConProcurement",
     fields: [
-      f("item", "Procurement_Name"), f("qty", "Quantity", "num"),
+      f("qty", "Quantity", "num"),
       f("unitPrice", "Unit_Cost", "num"), f("status", "Status"),
       f("dueDate", "Expected_Date", "date"),
       // PROCUREMENT.Total_Cost is a formula — never written; PG total recomputed
@@ -193,6 +300,8 @@ export const TABLES = [
       // are links the app doesn't wire — skipped both ways.
     ],
     links: [{ pg: "jobId", air: "Job", target: "job" }],
+    deriveReads: ["Procurement_Name"],
+    pgDerive: (fields) => ({ item: String(fields.Procurement_Name ?? "").slice(0, 300) }),
   },
   {
     // Spec 12 per-transaction ledger → PlatConCashflowLedger (migration-plan
@@ -204,11 +313,21 @@ export const TABLES = [
     // jobId is NOT NULL in PG: rows with no Job link are skipped + logged.
     key: "cashflow", air: "CASHFLOWS", model: "platConCashflowLedger",
     fields: [
-      f("name", "Cashflow_Name"), f("period", "Period"), f("type", "Type"),
-      f("amount", "Amount", "num"), f("sourceOrPayee", "Source_Or_Payee"),
-      f("category", "Category"), f("status", "Status"), f("notes", "Notes"),
+      f("amount", "Amount", "num"), f("notes", "Notes"),
     ],
     links: [{ pg: "jobId", air: "Job", target: "job" }],
+    // Didi drift: Period arrives as a month label ("June 2025") and 37 rows
+    // carry none (fallback: createdTime month); long labels overflow the
+    // VarChar columns, so every short text column is sliced to its width.
+    deriveReads: ["Cashflow_Name", "Period", "Type", "Source_Or_Payee", "Category", "Status"],
+    pgDerive: (fields, rec) => ({
+      name: String(fields.Cashflow_Name ?? "").slice(0, 200),
+      period: toPeriod(fields.Period, rec?.createdTime),
+      type: String(fields.Type ?? "Out") === "In" ? "In" : "Out",
+      sourceOrPayee: String(fields.Source_Or_Payee ?? "").slice(0, 200),
+      category: String(fields.Category ?? "").slice(0, 100),
+      status: String(fields.Status ?? "Forecast").slice(0, 20),
+    }),
   },
   {
     key: "variation_order", air: "CHANGE_LOG", model: "platConVariationOrder",
@@ -322,6 +441,25 @@ export const TABLES = [
       f("overrideLevel", "Override_Level"), f("applicationWindow", "Application_Window"),
     ],
     links: [], // Related_Hypothesis → HYPOTHESES is out of scope for v1.
+    // Didi drift: legacy rules lack Instance codes (derive a stable one) and
+    // keep their text in Operational_Directive rather than Rule_Description.
+    deriveReads: ["Rule_Name"],
+    pgDerive: (fields, rec) => {
+      const out = {};
+      if (!fields.Instance) out.ruleCode = ("LRN-" + String(rec?.id ?? "").slice(-6).toUpperCase()).slice(0, 20);
+      if (!fields.Rule_Description) {
+        const d = fields.Operational_Directive || fields.Rule_Name;
+        if (d) out.description = String(d);
+      }
+      // Legacy Rule_Type values are prose; PG kind is the guidance/adjustment
+      // enum (VarChar(20)). Lock columns sliced to width defensively.
+      if (fields.Rule_Type) {
+        out.kind = String(fields.Rule_Type).toLowerCase().includes("adjust") ? "adjustment" : "guidance";
+      }
+      if (fields.Override_Level) out.overrideLevel = String(fields.Override_Level).toLowerCase().replace(/[\s-]+/g, "_").slice(0, 30);
+      if (fields.Application_Window) out.applicationWindow = String(fields.Application_Window).slice(0, 50);
+      return out;
+    },
     airDerive: (row) => ({ Rule_Name: String(row.description ?? "").slice(0, 120) || "Untitled rule" }),
   },
   // ── Phase 4 additions (owner decisions 2026-07-29): CHANGE_LOG modelled;
@@ -348,6 +486,7 @@ export const TABLES = [
     // Mapping mirrors learning.ts airHypothesis(): app-only columns ride in
     // the Evidence JSON; description prefers Summary_of_Findings.
     key: "hypothesis", air: "HYPOTHESES", model: "platHypothesis",
+    deriveReads: ["Evidence", "Summary_of_Findings", "Hypothesis_Name", "Hypothesis_Type"],
     fields: [
       f("status", "Status"), f("sampleCount", "Evidence_Count", "num"),
       f("confidence", "Confidence", "num"), f("reviewedAt", "Date_Closed", "date"),
@@ -378,6 +517,7 @@ export const TABLES = [
     // airCorrection(): first-class Spec-12 columns win; app metadata rides in
     // the Notes JSON.
     key: "correction", air: "CORRECTIONS", model: "platCorrection",
+    deriveReads: ["Notes", "Description"],
     fields: [
       f("dimension", "Field_Corrected"), f("rootCause", "Root_Cause"),
       f("aiValueText", "AI_Output"), f("humanValueText", "Human_Correction"),
@@ -400,6 +540,8 @@ export const TABLES = [
     // Mapping mirrors learning.ts snapshotIntelligence(): rich app metrics
     // ride in the Accuracy_Summary JSON.
     key: "intelligence_snapshot", air: "INTELLIGENCE_SNAPSHOT", model: "platIntelligenceSnapshot",
+    noCreatedAt: true, // model keys on capturedAt
+    deriveReads: ["Accuracy_Summary", "Known_Gaps"],
     fields: [
       f("capturedAt", "Snapshot_Date", "date"),
       f("completedJobs", "Total_Jobs_Completed", "num"),
@@ -426,6 +568,7 @@ export const TABLES = [
     // Session_Id are TEXT fields on the Airtable side (not record links) —
     // `text: true` links resolve a bare id string through the same recMaps.
     key: "chat_session", air: "CHAT_SESSIONS", model: "platChatSession",
+    noCreatedAt: true, // model keys on startedAt
     fields: [
       f("title", "Session_Title"),
       f("startedAt", "Started_At", "date"), f("endedAt", "Ended_At", "date"),
@@ -453,11 +596,95 @@ export const TABLES = [
       f("status", "Status"), f("executedAt", "Date_Time", "date"),
     ],
     links: [],
+    deriveReads: ["Action_Type", "Initiated_By", "Log_Entry"],
     pgDerive: (fields) => ({
       operation: String(fields.Action_Type ?? "").toLowerCase().slice(0, 30),
+      targetTable: String(fields.Tables_Affected ?? "").slice(0, 100),
+      status: String(fields.Status ?? "executed").slice(0, 20),
       actorType: String(fields.Initiated_By ?? "") === "AI" ? "ai" : String(fields.Initiated_By ?? "") === "System" ? "system" : "human",
       actorName: String(fields.Initiated_By ?? ""),
       result: String(fields.Log_Entry ?? ""),
+    }),
+  },
+  // ── Phase 5 drift reconciliation (found on the live bases) ────────────────
+  {
+    // Didi predates the VENDORS table: their vendor directory lives in the
+    // Core ORGANISATIONS table (Type="Vendor", 47 real rows). Bases WITH a
+    // VENDORS table migrate it via the `vendor` entry above; both land in
+    // PlatConVendor (rec-id idempotency keeps re-runs safe either way).
+    key: "org_directory", air: "ORGANISATIONS", model: "platConVendor",
+    fields: [f("name", "Organisation_Name"), f("category", "Industry")],
+    links: [],
+    airFilter: (fields) => fields.Type === "Vendor",
+    deriveReads: ["Type", "Org_Status", "Address", "Notes"],
+    pgDerive: (fields) => ({
+      isActive: String(fields.Org_Status ?? "Active") === "Active",
+      notes: [fields.Address, fields.Notes].filter(Boolean).join(" · "),
+    }),
+  },
+  {
+    key: "engagement_type_config", air: "ENGAGEMENT_TYPE_CONFIG", model: "platEngagementTypeConfig",
+    fields: [
+      f("configName", "Config_Name"), f("phaseTemplate", "Phase_Template"),
+      f("planView", "Plan_View"), f("fullRiskRegister", "Full_Risk_Register", "bool"),
+      f("cashflowPeriod", "Cashflow_Period"), f("notes", "Notes"),
+      f("active", "Active", "bool"), f("portfolioView", "Portfolio_View", "bool"),
+    ],
+    links: [],
+    deriveReads: ["Engagement_Type"],
+    pgDerive: (fields) => ({
+      engagementType: String(fields.Engagement_Type ?? "long_project")
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_")
+        .slice(0, 30),
+    }),
+  },
+  {
+    key: "plat_cfg_reference", air: "PLAT_CFG_REFERENCE", model: "platCfgReference",
+    fields: [
+      f("type", "Ref_Type"), f("code", "Code"), f("name", "Name"), f("value", "Value"),
+      f("sortOrder", "Sort_Order", "num"), f("isActive", "Is_Active", "bool"),
+    ],
+    links: [],
+  },
+  {
+    key: "plat_cfg_setting", air: "PLAT_CFG_SETTING", model: "platCfgSetting",
+    noCreatedAt: true, // model has updatedAt only
+    fields: [f("key", "Setting_Key"), f("value", "Value")],
+    links: [],
+  },
+  {
+    // Construction-extension reference tables have no dedicated PG models —
+    // the governance framework classes their content as CUSTOMER CONFIG, so
+    // they land in PlatCfgReference under stable ref types.
+    key: "ref_zone", air: "REF_ZONES", model: "platCfgReference",
+    fields: [],
+    links: [],
+    deriveReads: ["Zone_Code", "Zone_Name", "Construction_Focus", "Active"],
+    pgDerive: (fields) => ({
+      type: "zone",
+      code: String(fields.Zone_Code ?? ""),
+      name: String(fields.Zone_Name ?? ""),
+      value: JSON.stringify({ constructionFocus: fields.Construction_Focus ?? "" }),
+      isActive: fields.Active !== false,
+    }),
+  },
+  {
+    key: "ref_budget", air: "REF_BUDGET", model: "platCfgReference",
+    fields: [],
+    links: [],
+    deriveReads: ["Classification_Code", "Classification_Name", "Contract_Type", "Reporting_Group", "Approval_Required", "Notes"],
+    pgDerive: (fields) => ({
+      type: "budget_category",
+      code: String(fields.Classification_Code ?? ""),
+      name: String(fields.Classification_Name ?? ""),
+      value: JSON.stringify({
+        contractType: fields.Contract_Type ?? "",
+        reportingGroup: fields.Reporting_Group ?? "",
+        approvalRequired: fields.Approval_Required === true,
+        notes: fields.Notes ?? "",
+      }),
+      isActive: true,
     }),
   },
 ];
