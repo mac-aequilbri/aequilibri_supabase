@@ -86,13 +86,78 @@ what was done, deviations from the plan and why, and plan errata.
   below.)
 
 ### Open questions for the owner (blocking later phases, not Phase 0)
-1. **§2b / database-per-client / "8 design rules" — MISSING.** The rules of
-   engagement say tenancy is decided as database-per-client per plan §2b with 8
-   design rules. The plan has no §2b, and no doc in the repo mentions
-   database-per-client; the switch audit explicitly describes the current
-   design as a **single shared DB with per-row `orgId`** ("Tenancy design is
-   sound: every `Plat*` model carries `orgId` … single shared DB"). Need the
-   actual §2b text (or the 8 rules) before Phase 2 (new cashflow model) and
-   Phase 3 (control plane), where tenancy shape is load-bearing.
+1. ~~**§2b / database-per-client / "8 design rules" — MISSING.**~~ **RESOLVED
+   2026-07-29:** owner confirmed the architecture is **database per client**.
+   The referenced §2b never existed in the plan, so it has now been written
+   into `docs/airtable-to-postgres-migration-plan.md` (§2b) with 8 design
+   rules drafted by this session (control DB + N tenant DBs, registry-driven
+   connection factory, single tenant schema/migration history, `orgId` kept as
+   defense-in-depth, bounded client cache, registry-only cross-tenant ops).
+   The rules are owner-vetoable; treated as constraints from Phase 2 onward.
 2. PAT access to template base `appharWaojouHgMeW` (403) — re-scope or confirm
    the base is gone.
+
+---
+
+## Phase 1 — Make Postgres mode fully bootable (2026-07-29) — COMPLETE
+
+### Results
+- **Route walk: 119/119 page routes return 200 in PG mode** (demo auth, empty
+  DB, seeded `demo-walk` org; `[id]`-style params probed with `1`). Zero
+  server-side exceptions in the dev-server log for the whole walk.
+- Missing-record detail routes render "Not Found" messaging gracefully (HTTP
+  200 with not-found UI, not crashes).
+- GET API probes: `/api/health` (+`?deep=1`), org search, actions/plan
+  exports, `/api/uc1/vendor-prices` all 200; `/api/platform/scheduler` 503 =
+  correct fail-closed with `CRON_SECRET` unset.
+- **Zero PG-mode crashes to fix** — the plan expected some; the only
+  every-page failure (Google Fonts) was already fixed in Phase 0.
+- vitest 282/282 green; `tsc --noEmit` clean.
+
+### Plan errata (corrected in the plan doc)
+- Cashflow does NOT hard-fail on load in PG mode — the window renders on an
+  empty DB; only writes throw (boot-guard wording was accurate, plan §Phase 1.1
+  wasn't).
+- Control-plane call sites do not "silently hit Airtable" in PG mode:
+  `controlEnabled()` requires `airtableEnabled()`, so they no-op/fallback.
+
+### Carried notes
+- Browser-pane gotcha confirmed exactly as the plan warned: streamed RSC
+  content may not paint on initial pane loads — page HTML via curl is the
+  source of truth for content checks.
+- Clerk keys remain commented out (demo mode) for ongoing development;
+  restore for any auth-path work. Auth-on boot was verified in Phase 0.
+- Cashflow window in PG mode currently renders an empty list via the legacy
+  read path — Phase 2 replaces this with the Spec-12 ledger model.
+
+### Setup notes
+- Route walk runs in **demo mode** (Clerk keys temporarily commented out of
+  `.env`): the walk needs an operator session, demo mode is
+  operator-by-definition in development, and it matches how the test suite
+  runs. Keys go back after Phase 1 auth-path checks.
+- Seeded one empty org `demo-walk` (bare `PlatOrganisation` row, same shape the
+  integration tests create) so `/app/[org]/*` routes resolve.
+- **Dev-server stability on this box:** repeated OOM kills when >1 Turbopack
+  instance runs (one wedged 2GB node held port 3000 + Next 16's
+  one-dev-server-per-project lock and had to be force-killed). Rule: exactly
+  one dev server, don't run vitest concurrently with it. Next 16 docs expose
+  no Turbopack memory cap.
+
+### Inventory: ~28 deliberately-global `airtableEnabled()` sites (plan §Phase 1.3)
+33 grep hits for `airtableEnabled()` (no ctx): `uc1Source.ts` ×24,
+`schemaDriftSource.ts` ×2, `api/health` ×2, `onboarding.ts` ×2,
+`org-context.ts` ×1, `diagnostics/page.tsx` ×1, `airtable/generic.ts` ×1,
+`airtable/tables/decisions.ts` ×1, plus the definition in
+`airtable/control.ts` (`controlEnabled = airtableEnabled() && controlBaseId`).
+**Decision:** all are `if (!airtableEnabled()) { …PG path }` guards that
+already resolve to Postgres with the global flag off — converting them now
+duplicates Phase 6's mechanical flag removal (and vitest/movers still read the
+flag). Leave until Phase 6; nothing here blocks bootability.
+
+### Inventory: control-plane touchpoints (all silently no-op/fallback in PG mode → Phase 3 worklist)
+27 `controlEnabled(` sites: `app/actions.ts` ×3, `api/platform/hooks` ×1,
+`airtable/config.ts` ×1 (per-org feature overrides!), `scheduler.ts` ×1,
+`onboarding.ts` ×2, `[org]/agents/actions.ts` ×1, `app/page.tsx` ×1,
+`jobCatalogSource.ts` ×1, `[org]/team/page.tsx` ×1, `org-context.ts` ×3,
+`navCountsSource.ts` ×2, `outbox.ts` ×2, `provisioning.ts` ×3,
+`recordWriter.ts` ×1, `rls.ts` ×1, `schemaDriftSource.ts` ×1.

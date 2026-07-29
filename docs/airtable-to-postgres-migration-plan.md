@@ -41,6 +41,65 @@ A backend-switch audit ran 2026-07-28 (report: `docs/airtable-postgres-switch-au
 
 ---
 
+## 2b. Tenancy architecture (owner decision 2026-07-29): database per client
+
+> This section was missing from the original plan (the owner's rules of
+> engagement referenced it before it existed). The **decision is the owner's**:
+> one Postgres database per client org. The 8 design rules below were drafted
+> by the executing session on 2026-07-29 to make that decision implementable
+> and are open to owner veto/amendment; they are treated as constraints from
+> Phase 2 onward.
+
+Rationale: hard tenant isolation for the compliance driver, per-client
+residency/backup/restore/offboarding (drop the DB, hand over a dump), and
+blast-radius containment — a bug or bad migration in one client's DB cannot
+touch another's.
+
+**Design rules:**
+
+1. **Two schema domains, cleanly split.** One **control** database holds the
+   platform control plane (org registry, team, RLS assignments, outbox,
+   catalogs, cascades — the `PlatCtl*` models). N **tenant** databases hold all
+   client/domain data (the other `Plat*` models). No table lives in both; no
+   cross-database foreign keys.
+2. **The control DB's org registry is the single source of tenant-DB routing**
+   (orgId → tenant `DATABASE_URL`). Per-tenant connection strings are data,
+   not env vars (env carries only the control DB URL and the credentials
+   scheme); stored secrets are encrypted at rest with `PLATFORM_ENCRYPTION_KEY`.
+3. **Exactly one connection factory.** All tenant DB access goes through a
+   single module that resolves org → cached PrismaClient. No call site
+   constructs its own client/URL. (This is the control-plane repository-layer
+   principle from Phase 3 applied to connections — no 180-site inline branching
+   again.)
+4. **One tenant schema, one migration history, zero drift.** Every tenant DB
+   runs the identical Prisma schema and full migration history. Provisioning a
+   client = create DB → `migrate deploy` → seed. Schema changes roll out to
+   every tenant DB or none; a tenant DB with divergent schema is a defect, not
+   a feature (Airtable's per-base field drift does NOT get re-created in PG).
+5. **The control DB gets its own Prisma schema + migration history**, separate
+   from the tenant schema, so control-plane and tenant migrations can ship
+   independently and a tenant dump never contains control-plane rows.
+6. **Keep `orgId` scoping as defense-in-depth.** Tenant rows keep their
+   `orgId` column and the existing org-isolation guard/RBAC seams stay active,
+   even though a tenant DB only ever contains one org. Wrong-DB wiring bugs
+   must hit a second, independent wall. The existing isolation regression
+   tests must keep passing unchanged.
+7. **Bounded connection hygiene.** The client cache is LRU-bounded with
+   explicit disposal (Postgres connections are finite; dev HMR and tests must
+   not leak pools). One PrismaClient per active tenant, hard cap, metrics on
+   evictions.
+8. **Cross-tenant operations enumerate via the registry only.** Platform-admin
+   views, diagnostics, movers, reconciliation and backups iterate orgs from
+   the control DB and connect per-tenant through the factory — never SQL
+   across tenant DBs, never a hand-maintained list of connection strings.
+
+Consequences worth noting up front: local dev runs N+1 databases on one
+Postgres instance (cheap — same cluster, separate databases); Phase 3 grows a
+"provision tenant DB" step; the movers gain a per-org target-DB parameter;
+`docs`/env-var documentation must describe the control-DB-URL-only environment.
+
+---
+
 ## 3. Ground rules for the executing session
 
 - Work only in the codebase **copy**. Never write to the original repo's remote.
@@ -65,7 +124,7 @@ A backend-switch audit ran 2026-07-28 (report: `docs/airtable-postgres-switch-au
 
 ## Phase 1 — Make Postgres mode fully bootable (≈ 1–2 days)
 
-1. Walk every route/window in PG mode with an empty database. Expected hard failure: cashflow (Phase 2). Everything touching the control plane will still silently hit Airtable — that's Phase 3; just inventory those touchpoints now.
+1. Walk every route/window in PG mode with an empty database. Expected hard failure: cashflow (Phase 2). *(Correction 2026-07-29, Phase 1 execution: the cashflow window loads fine on an empty DB — only cashflow **writes** throw, per the boot guard. No route hard-fails on GET.)* Everything touching the control plane will still silently hit Airtable — that's Phase 3; just inventory those touchpoints now. *(Correction: with `AIRTABLE_MIGRATION=false`, `controlEnabled()` is also false, so control-plane sites no-op/fallback rather than hitting Airtable.)*
 2. Fix any PG-mode crashes that aren't cashflow/control-plane (there will be some — PG mode has barely been exercised).
 3. Decide `uc1Source` and onboarding globals: in a PG-only build the ~28 deliberately-global `airtableEnabled()` sites should mostly resolve to hard-coded PG paths. Inventory them (grep `airtableEnabled(` with no ctx arg) and convert where safe.
 4. Get vitest green, including the 3 DB-dependent suites now that a local PG exists.
