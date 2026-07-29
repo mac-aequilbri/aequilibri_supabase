@@ -7,7 +7,7 @@
 // these pickers are what makes "create X against job Y" reachable at all.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { currentJobScope, inScope } from "./rls";
 import type { OrgCtx } from "./types";
 
@@ -23,7 +23,7 @@ function str(v: unknown): string {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<JobOption[]> {
-  const jobs = await prisma.platJob.findMany({
+  const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId },
     select: { id: true, code: true, name: true },
     orderBy: { code: "asc" },

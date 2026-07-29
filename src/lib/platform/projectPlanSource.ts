@@ -1,5 +1,5 @@
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { scopeByJob } from "./rls";
 import {
   PriorityBand,
@@ -48,7 +48,7 @@ function linksTo(v: unknown, recordId: string): boolean {
 
 async function fromPostgres(ctx: OrgCtx): Promise<ProjectPlanWorkstreamView[]> {
   const [workstreams, risks] = await Promise.all([
-    prisma.platWorkstream.findMany({
+    db(ctx).platWorkstream.findMany({
       where: { orgId: ctx.orgId },
       orderBy: { lastUpdated: "desc" },
       include: {
@@ -56,7 +56,7 @@ async function fromPostgres(ctx: OrgCtx): Promise<ProjectPlanWorkstreamView[]> {
         actions: { orderBy: { dueDate: "asc" }, take: 10 },
       },
     }),
-    prisma.platConRisk.findMany({
+    db(ctx).platConRisk.findMany({
       where: { orgId: ctx.orgId, status: { in: ["open", "accepted"] } },
       select: { jobId: true, likelihood: true, impact: true },
     }),

@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ChatStreamEvent } from "@/lib/claude";
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { normalizeTeamRole } from "@/lib/platform/module1Governance";
 import { isPlatformAdmin } from "@/lib/platform/org-context";
 import { getPrompt } from "@/lib/platform/prompts";
@@ -133,12 +133,12 @@ export async function getOrCreateSession(
     });
     return created.id;
   }
-  const open = await prisma.platChatSession.findFirst({
+  const open = await db(ctx).platChatSession.findFirst({
     where: { orgId: ctx.orgId, endedAt: null, title: PROJECT_TITLE },
     orderBy: { startedAt: "desc" },
   });
   if (open) return open.id;
-  const session = await prisma.platChatSession.create({
+  const session = await db(ctx).platChatSession.create({
     data: { orgId: ctx.orgId, jobId: typeof jobId === "number" ? jobId : undefined, title: PROJECT_TITLE },
   });
   return session.id;
@@ -158,7 +158,7 @@ export async function listChatSessions(ctx: OrgCtx): Promise<ChatSessionSummary[
       }))
       .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
   }
-  const rows = await prisma.platChatSession.findMany({
+  const rows = await db(ctx).platChatSession.findMany({
     where: { orgId: ctx.orgId, title: { startsWith: STANDALONE_PREFIX } },
     orderBy: { startedAt: "desc" },
   });
@@ -182,7 +182,7 @@ export async function createChatSession(ctx: OrgCtx, title?: string): Promise<Re
     });
     return created.id;
   }
-  const session = await prisma.platChatSession.create({ data: { orgId: ctx.orgId, title: encoded } });
+  const session = await db(ctx).platChatSession.create({ data: { orgId: ctx.orgId, title: encoded } });
   return session.id;
 }
 
@@ -193,7 +193,7 @@ export async function renameChatSession(ctx: OrgCtx, sessionId: RecordId, title:
     await core.update(ctx.orgSlug, "CHAT_SESSIONS", String(sessionId), { Session_Title: encoded });
     return;
   }
-  await prisma.platChatSession.updateMany({
+  await db(ctx).platChatSession.updateMany({
     where: { id: Number(sessionId), orgId: ctx.orgId },
     data: { title: encoded },
   });
@@ -211,8 +211,8 @@ export async function deleteChatSession(ctx: OrgCtx, sessionId: RecordId): Promi
     await core.remove(ctx.orgSlug, "CHAT_SESSIONS", [String(sessionId)]);
     return;
   }
-  await prisma.platChatMessage.deleteMany({ where: { orgId: ctx.orgId, sessionId: Number(sessionId) } });
-  await prisma.platChatSession.deleteMany({ where: { id: Number(sessionId), orgId: ctx.orgId } });
+  await db(ctx).platChatMessage.deleteMany({ where: { orgId: ctx.orgId, sessionId: Number(sessionId) } });
+  await db(ctx).platChatSession.deleteMany({ where: { id: Number(sessionId), orgId: ctx.orgId } });
 }
 
 /** Whether an id is one of this org's standalone conversations — the ownership
@@ -272,7 +272,7 @@ export async function endSession(
     }
     return;
   }
-  await prisma.platChatSession.updateMany({
+  await db(ctx).platChatSession.updateMany({
     where: { id: Number(sessionId), orgId: ctx.orgId },
     data: { endedAt: new Date() },
   });
@@ -282,7 +282,7 @@ export async function listMessages(ctx: OrgCtx, sessionId: RecordId): Promise<Ch
   if (airtableEnabled(ctx)) {
     return listSessionMessagesAirtable(ctx, sessionId);
   }
-  const rows = await prisma.platChatMessage.findMany({
+  const rows = await db(ctx).platChatMessage.findMany({
     where: { orgId: ctx.orgId, sessionId: Number(sessionId) },
     orderBy: { createdAt: "asc" },
   });
@@ -321,7 +321,7 @@ async function dataContext(ctx: OrgCtx): Promise<string> {
   const ids = scope.mode === "some" ? [...scope.jobIds].map(Number).filter((n) => Number.isFinite(n)) : null;
   const jobW = ids ? { jobId: { in: ids } } : scope.mode === "none" ? { jobId: -1 } : {};
   const ownW = ids ? { id: { in: ids } } : scope.mode === "none" ? { id: -1 } : {};
-  const jobs = await prisma.platJob.findMany({
+  const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId, ...ownW },
     select: {
       id: true,
@@ -336,10 +336,10 @@ async function dataContext(ctx: OrgCtx): Promise<string> {
     orderBy: { updatedAt: "desc" },
   });
   const [openActions, pendingProposals] = await Promise.all([
-    prisma.platActionHub.count({
+    db(ctx).platActionHub.count({
       where: { orgId: ctx.orgId, ...jobW, status: { in: ["open", "in_progress"] } },
     }),
-    prisma.platPendingWrite.count({ where: { orgId: ctx.orgId, ...jobW, status: "proposed" } }),
+    db(ctx).platPendingWrite.count({ where: { orgId: ctx.orgId, ...jobW, status: "proposed" } }),
   ]);
   return [
     `Jobs: ${JSON.stringify(jobs, (_k, v) => (typeof v === "bigint" ? Number(v) : v))}`,
@@ -408,7 +408,7 @@ export async function sendChatMessage(
     });
     userMsgRecordId = userMsg.id;
   } else {
-    const userMsg = await prisma.platChatMessage.create({
+    const userMsg = await db(ctx).platChatMessage.create({
       data: { orgId: ctx.orgId, sessionId: Number(sessionId), role: "user", content: text },
     });
     userMsgId = userMsg.id;
@@ -428,7 +428,7 @@ export async function sendChatMessage(
       ? listSessionMessagesAirtable(ctx, sessionId).then((rows) =>
           rows.filter((m) => String(m.id) !== String(userMsgRecordId)).slice(-HISTORY_LIMIT).reverse(),
         )
-      : prisma.platChatMessage.findMany({
+      : db(ctx).platChatMessage.findMany({
           where: { orgId: ctx.orgId, sessionId: Number(sessionId), id: { lt: userMsgId! } },
           orderBy: { createdAt: "desc" },
           take: HISTORY_LIMIT,
@@ -530,7 +530,7 @@ export async function sendChatMessage(
       })
       .catch(() => {});
   } else {
-    await prisma.platChatMessage.create({
+    await db(ctx).platChatMessage.create({
       data: {
         orgId: ctx.orgId,
         sessionId: Number(sessionId),
@@ -539,7 +539,7 @@ export async function sendChatMessage(
         toolCalls: JSON.stringify(toolTrace),
       },
     });
-    await prisma.platExecutionLog
+    await db(ctx).platExecutionLog
       .create({
         data: {
           orgId: ctx.orgId,

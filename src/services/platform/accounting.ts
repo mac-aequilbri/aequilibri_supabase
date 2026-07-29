@@ -2,12 +2,12 @@
 // No tokens are persisted (the Xero Custom Connection is env-level); the
 // connection row stores status + the latest read-only summary for display.
 
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { getAccountingProvider } from "@/lib/platform/accounting";
 import { OrgCtx } from "@/lib/platform/types";
 
 async function log(ctx: OrgCtx, userName: string, operation: string, result: string, ok: boolean) {
-  await prisma.platExecutionLog
+  await db(ctx).platExecutionLog
     .create({
       data: {
         orgId: ctx.orgId,
@@ -29,14 +29,14 @@ export async function connectAccounting(ctx: OrgCtx, userName: string): Promise<
   const provider = getAccountingProvider();
   try {
     const { orgName } = await provider.connect();
-    const existing = await prisma.platConAccountingConnection.findFirst({
+    const existing = await db(ctx).platConAccountingConnection.findFirst({
       where: { orgId: ctx.orgId },
     });
     const data = { provider: provider.provider, status: "connected", orgName };
     if (existing) {
-      await prisma.platConAccountingConnection.update({ where: { id: existing.id }, data });
+      await db(ctx).platConAccountingConnection.update({ where: { id: existing.id }, data });
     } else {
-      await prisma.platConAccountingConnection.create({ data: { orgId: ctx.orgId, ...data } });
+      await db(ctx).platConAccountingConnection.create({ data: { orgId: ctx.orgId, ...data } });
     }
     await log(ctx, userName, "create", `Connected to ${orgName} via ${provider.provider}`, true);
     return null;
@@ -49,13 +49,13 @@ export async function connectAccounting(ctx: OrgCtx, userName: string): Promise<
 
 export async function syncAccounting(ctx: OrgCtx, userName: string): Promise<string | null> {
   const provider = getAccountingProvider();
-  const connection = await prisma.platConAccountingConnection.findFirst({
+  const connection = await db(ctx).platConAccountingConnection.findFirst({
     where: { orgId: ctx.orgId, status: "connected" },
   });
   if (!connection) return "No connected accounting provider — connect first.";
   try {
     const summary = await provider.fetchSummary();
-    await prisma.platConAccountingConnection.update({
+    await db(ctx).platConAccountingConnection.update({
       where: { id: connection.id },
       data: {
         provider: provider.provider,
@@ -81,7 +81,7 @@ export async function syncAccounting(ctx: OrgCtx, userName: string): Promise<str
 }
 
 export async function disconnectAccounting(ctx: OrgCtx, userName: string): Promise<void> {
-  await prisma.platConAccountingConnection.updateMany({
+  await db(ctx).platConAccountingConnection.updateMany({
     where: { orgId: ctx.orgId },
     data: { status: "disconnected" },
   });

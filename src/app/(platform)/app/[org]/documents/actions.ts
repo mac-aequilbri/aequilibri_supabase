@@ -14,7 +14,7 @@ import {
   verifyStoredSnapshot,
 } from "@/services/platform/documents";
 import { loadDocumentDetail } from "@/lib/platform/documentsSource";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import type { CreateFormState } from "@/components/form/CreateForm";
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -36,7 +36,7 @@ export async function uploadDocument(_prev: CreateFormState, formData: FormData)
       return { error: "Couldn't save — the file is too large (max 5 MB). Nothing was recorded." };
     }
     const jobCode = !airtableEnabled(ctx) && typeof jobId === "number"
-      ? (await prisma.platJob.findFirst({ where: { id: jobId, orgId: ctx.orgId }, select: { code: true } }))?.code
+      ? (await db(ctx).platJob.findFirst({ where: { id: jobId, orgId: ctx.orgId }, select: { code: true } }))?.code
       : undefined;
     try {
       await ingestDocumentFile(ctx, user.name, {

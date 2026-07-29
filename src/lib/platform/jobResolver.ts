@@ -14,7 +14,7 @@
 // resolver around it is the only part that touches a backend.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import type { RecordId } from "@/lib/platform/recordWriter";
 import type { OrgCtx } from "@/lib/platform/types";
@@ -180,7 +180,7 @@ async function loadJobCandidates(ctx: OrgCtx): Promise<JobCandidate[]> {
       name: typeof r["Job_Name"] === "string" ? r["Job_Name"] : "",
     }));
   }
-  const rows = await prisma.platJob.findMany({
+  const rows = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { id: "asc" },
     take: JOB_SCAN_CAP,
@@ -204,13 +204,13 @@ async function jobFromSender(ctx: OrgCtx, sender: string): Promise<JobCandidate 
   const email = sender.match(/[^\s<>"]+@[^\s<>"]+/)?.[0]?.toLowerCase();
   if (!email || airtableEnabled(ctx)) return null;
 
-  const contact = await prisma.platContact.findFirst({
+  const contact = await db(ctx).platContact.findFirst({
     where: { orgId: ctx.orgId, email: { equals: email, mode: "insensitive" } },
     select: { id: true },
   });
   if (!contact) return null;
 
-  const jobs = await prisma.platJob.findMany({
+  const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId, clientContactId: contact.id },
     take: 2,
     select: { id: true, name: true },

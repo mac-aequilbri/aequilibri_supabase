@@ -2,7 +2,7 @@
 // page shows the latest analyses alongside the trigger form.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { PageHeader } from "@/components/PageHeader";
 import { SubmitButton } from "@/components/form/SubmitButton";
 import { loadJobOptions } from "@/lib/platform/jobOptionsSource";
@@ -18,7 +18,7 @@ export default async function DelayCascadePage({ params }: { params: Promise<{ o
     loadJobOptions(ctx),
     airtableEnabled(ctx)
       ? core.list(ctx.orgSlug, "EXECUTION_LOG", { maxRecords: 100 })
-      : prisma.platExecutionLog.findMany({
+      : db(ctx).platExecutionLog.findMany({
           where: { orgId: ctx.orgId, targetTable: "delay_cascade" },
           orderBy: { createdAt: "desc" },
           take: 5,

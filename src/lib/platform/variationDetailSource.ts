@@ -5,7 +5,7 @@
 // Airtable mode (Airtable JOBS has no code field — see plan P4).
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { variationStatusFromAir } from "./changeLog";
 import { recordInScope } from "./rls";
@@ -43,7 +43,7 @@ function dateOrNull(v: unknown): Date | null {
 async function fromPostgres(ctx: OrgCtx, id: string): Promise<VariationDetailView | null> {
   const recId = Number(id);
   if (!Number.isInteger(recId)) return null;
-  const vo = await prisma.platConVariationOrder.findFirst({
+  const vo = await db(ctx).platConVariationOrder.findFirst({
     where: { id: recId, orgId: ctx.orgId },
     include: { job: { select: { code: true } } },
   });

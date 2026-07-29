@@ -1,7 +1,7 @@
 // Job context for AI generation — Postgres (default) or Airtable when the flag
 // is on. The construction AI services (variation drafting, weekly reports,
 // quote-from-budget) build a prompt context from a job and its related rows.
-// Before this, those reads went straight to prisma.platJob, so generation was
+// Before this, those reads went straight to db(ctx).platJob, so generation was
 // impossible for an Airtable-only org (no Postgres job to read). This source
 // gives them one shape over either backend; the Airtable side filters the
 // related tables by their Job link, exactly like jobDetailSource/jobsListSource.
@@ -12,7 +12,7 @@
 
 import { airtableEnabled, core } from "@/lib/airtable";
 import type { CoreRow } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { VARIATION_FILTER, variationStatusFromAir } from "./changeLog";
 import { listOptional } from "./optionalList";
@@ -82,7 +82,7 @@ function linksTo(v: unknown, recordId: string): boolean {
 async function fromPostgres(ctx: OrgCtx, jobId: RecordId): Promise<JobContext | null> {
   const numId = Number(jobId);
   if (!Number.isInteger(numId)) return null;
-  const job = await prisma.platJob.findFirst({
+  const job = await db(ctx).platJob.findFirst({
     where: { id: numId, orgId: ctx.orgId },
     include: {
       conPhases: { where: { isAiDraft: false }, orderBy: { sortOrder: "asc" } },

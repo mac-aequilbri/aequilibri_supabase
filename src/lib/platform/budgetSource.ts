@@ -7,7 +7,7 @@
 // PROCUREMENT (see budgetActuals). Variance is derived as Forecast − Estimated.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { sumMoney } from "./money";
 import { budgetActuals, loadProcurement } from "./procurementSource";
@@ -43,7 +43,7 @@ function num(v: unknown): number {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<JobBudget[]> {
-  const jobs = await prisma.platJob.findMany({
+  const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { code: "asc" },
     include: {
@@ -135,7 +135,7 @@ export async function loadBudgetLineDetail(ctx: OrgCtx, id: string): Promise<Edi
       actualAmount: actuals.get(id) ?? 0,
     };
   }
-  const b = await prisma.platConBudgetLine.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const b = await db(ctx).platConBudgetLine.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!b) return null;
   if (!(await recordInScope(ctx, b))) return null;
   return {

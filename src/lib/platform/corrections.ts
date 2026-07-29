@@ -11,7 +11,7 @@
 // ride in the Notes JSON until the template gains dedicated fields.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { recordRuleOverride } from "@/services/platform/learning";
 import { Actor, OrgCtx } from "./types";
 import type { RecordId } from "./recordWriter";
@@ -139,7 +139,7 @@ export async function emitCorrection(
       })
       .catch(() => {});
   } else {
-    const correction = await prisma.platCorrection.create({
+    const correction = await db(ctx).platCorrection.create({
       data: {
         orgId: ctx.orgId,
         jobId: input.jobId,
@@ -189,7 +189,7 @@ export async function emitCorrection(
       })
       .catch(() => {});
   } else {
-    await prisma.platExecutionLog
+    await db(ctx).platExecutionLog
       .create({
         data: {
           orgId: ctx.orgId,

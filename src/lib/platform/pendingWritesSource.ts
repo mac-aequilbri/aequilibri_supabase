@@ -1,5 +1,5 @@
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import type { RecordId } from "@/lib/platform/recordWriter";
 import { proposalJobId } from "./proposalSource";
 import { currentJobScope, inScope } from "./rls";
@@ -36,7 +36,7 @@ function date(v: unknown): Date | null {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<PendingWriteView[]> {
-  const rows = await prisma.platPendingWrite.findMany({
+  const rows = await db(ctx).platPendingWrite.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { createdAt: "desc" },
   });
@@ -98,7 +98,7 @@ export async function loadProposedPendingCount(ctx: OrgCtx): Promise<number> {
   if (!airtableEnabled(ctx)) {
     const ids = scope.mode === "some" ? [...scope.jobIds].map(Number).filter((n) => Number.isFinite(n)) : null;
     const jobW = ids ? { jobId: { in: ids } } : scope.mode === "none" ? { jobId: -1 } : {};
-    return prisma.platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed", ...jobW } });
+    return db(ctx).platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed", ...jobW } });
   }
   const rows = await core.list(ctx.orgSlug, "PENDING_WRITES", {
     maxRecords: 1000,

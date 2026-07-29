@@ -8,7 +8,7 @@
 // BUDGET.Actual rollup app-side (sum of linked procurement where invoiced/paid).
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { loadJobLabelMap } from "./jobOptionsSource";
 import { recordInScope, scopeByJob } from "./rls";
@@ -105,7 +105,7 @@ function firstLink(v: unknown): string | null {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<ProcurementView[]> {
-  const rows = await prisma.platConProcurement.findMany({
+  const rows = await db(ctx).platConProcurement.findMany({
     where: { orgId: ctx.orgId },
     orderBy: [{ status: "asc" }, { dueDate: "asc" }],
     include: { job: { select: { code: true } }, vendor: { select: { name: true } } },
@@ -190,7 +190,7 @@ export async function loadProcurementDetail(ctx: OrgCtx, id: string): Promise<Ed
       dueDate: dateInput(str(r["Expected_Date"]) || null),
     };
   }
-  const o = await prisma.platConProcurement.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const o = await db(ctx).platConProcurement.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!o) return null;
   if (!(await recordInScope(ctx, o))) return null;
   return {

@@ -197,7 +197,7 @@ function tenantClientFor(url: string): TenantEntry {
  *  IMPORTANT: an org must not be flipped onto its own database until that
  *  sweep is complete — a partial sweep splits its reads/writes across two
  *  databases. */
-export function db(ctx: { orgId: number; config?: { tenantDatabaseUrl?: string } & Record<string, unknown> }): typeof prisma {
+export function db(ctx: { orgId: number; config?: { tenantDatabaseUrl?: string } }): typeof prisma {
   const url = ctx.config?.tenantDatabaseUrl;
   if (!url || url === process.env.DATABASE_URL) return prisma;
   // Control-model access still routes to the single control client.
@@ -206,7 +206,7 @@ export function db(ctx: { orgId: number; config?: { tenantDatabaseUrl?: string }
 
 /** Unguarded twin of db(ctx) for deliberate cross-org/ops access on a
  *  provisioned tenant database. */
-export function dbUnscoped(ctx: { orgId: number; config?: { tenantDatabaseUrl?: string } & Record<string, unknown> }): typeof prismaUnscoped {
+export function dbUnscoped(ctx: { orgId: number; config?: { tenantDatabaseUrl?: string } }): typeof prismaUnscoped {
   const url = ctx.config?.tenantDatabaseUrl;
   if (!url || url === process.env.DATABASE_URL) return prismaUnscoped;
   return withControlDispatch(tenantClientFor(url).base, clients.control) as typeof prismaUnscoped;

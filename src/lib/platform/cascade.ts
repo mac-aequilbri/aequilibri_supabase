@@ -31,7 +31,7 @@
 //    bypass them (same accepted limitation as post-write reconciliation).
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { getActiveRules, markRuleApplied, type RuleRow } from "@/services/platform/learning";
 import { normalizeRag } from "./phasesSource";
@@ -234,13 +234,13 @@ async function cascadeProcurementToCashflow(ctx: OrgCtx, write: CascadeWrite): P
   } else {
     const procId = Number(write.recordId);
     if (!Number.isInteger(procId)) return;
-    const proc = await prisma.platConProcurement.findFirst({
+    const proc = await db(ctx).platConProcurement.findFirst({
       where: { id: procId, orgId: ctx.orgId },
     });
     if (!proc) return;
     const marker = `cascade:${procId}`;
     const dateRaw = (proc.dueDate ?? new Date()).toISOString();
-    const existing = await prisma.platConCashflowLedger.findFirst({
+    const existing = await db(ctx).platConCashflowLedger.findFirst({
       where: { orgId: ctx.orgId, notes: { contains: marker } },
     });
     source = {
@@ -299,7 +299,7 @@ async function cascadeBlockerToPhaseRag(ctx: OrgCtx, write: CascadeWrite): Promi
   } else {
     const numId = Number(write.data.phaseId);
     if (!Number.isInteger(numId) || numId <= 0) return;
-    const phase = await prisma.platConPhase.findFirst({ where: { id: numId, orgId: ctx.orgId } });
+    const phase = await db(ctx).platConPhase.findFirst({ where: { id: numId, orgId: ctx.orgId } });
     if (!phase) return;
     phaseId = numId;
     currentRag = normalizeRag(phase.rag);
@@ -342,10 +342,10 @@ async function cascadeRiskToIssue(ctx: OrgCtx, write: CascadeWrite): Promise<voi
   } else {
     const numId = Number(write.recordId);
     if (!Number.isInteger(numId)) return;
-    const risk = await prisma.platConRisk.findFirst({ where: { id: numId, orgId: ctx.orgId } });
+    const risk = await db(ctx).platConRisk.findFirst({ where: { id: numId, orgId: ctx.orgId } });
     if (!risk) return;
     already =
-      (await prisma.platActionHub.findFirst({
+      (await db(ctx).platActionHub.findFirst({
         where: { orgId: ctx.orgId, issueType: "Risk Materialised", riskId: numId },
       })) !== null;
     riskId = numId;
@@ -407,7 +407,7 @@ async function recordAdvisory(ctx: OrgCtx, rule: CascadeRule, write: CascadeWrit
     });
     return;
   }
-  await prisma.platExecutionLog.create({
+  await db(ctx).platExecutionLog.create({
     data: {
       orgId: ctx.orgId,
       actorType: "system",
@@ -426,7 +426,7 @@ async function recordAdvisory(ctx: OrgCtx, rule: CascadeRule, write: CascadeWrit
  *  EXECUTION_LOG. */
 export async function loadCascadeAdvisories(ctx: OrgCtx): Promise<CascadeAdvisory[]> {
   if (!airtableEnabled(ctx)) {
-    const rows = await prisma.platExecutionLog.findMany({
+    const rows = await db(ctx).platExecutionLog.findMany({
       where: { orgId: ctx.orgId, operation: "cascade", status: "Ongoing" },
       orderBy: { createdAt: "desc" },
       take: 100,
@@ -501,7 +501,7 @@ export async function dismissCascadeAdvisory(
   } else {
     const numId = Number(advisoryId);
     if (!Number.isInteger(numId)) return;
-    const row = await prisma.platExecutionLog.findFirst({
+    const row = await db(ctx).platExecutionLog.findFirst({
       where: { id: numId, orgId: ctx.orgId, operation: "cascade", status: "Ongoing" },
     });
     if (!row) return;
@@ -511,7 +511,7 @@ export async function dismissCascadeAdvisory(
       return; // not an advisory row — refuse to touch other log entries
     }
     if (!ruleCode) return;
-    await prisma.platExecutionLog.update({ where: { id: numId }, data: { status: "Done" } });
+    await db(ctx).platExecutionLog.update({ where: { id: numId }, data: { status: "Done" } });
   }
   if (override) {
     const { emitCorrection } = await import("./corrections");
@@ -535,7 +535,7 @@ export async function dismissCascadeAdvisory(
  *  (existing orgs predate the seeds). */
 export async function seedCascadeRules(ctx: OrgCtx): Promise<number> {
   if (!airtableEnabled(ctx)) {
-    const rows = await prisma.platLearningRule.findMany({
+    const rows = await db(ctx).platLearningRule.findMany({
       where: { orgId: ctx.orgId, ruleCode: { startsWith: "CASCADE-" } },
       select: { ruleCode: true },
     });
@@ -543,7 +543,7 @@ export async function seedCascadeRules(ctx: OrgCtx): Promise<number> {
     let created = 0;
     for (const seed of CASCADE_RULE_SEEDS) {
       if (existing.has(seed.ruleCode)) continue;
-      await prisma.platLearningRule.create({
+      await db(ctx).platLearningRule.create({
         data: {
           orgId: ctx.orgId,
           ruleCode: seed.ruleCode,

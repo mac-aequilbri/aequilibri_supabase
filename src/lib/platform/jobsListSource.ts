@@ -14,7 +14,7 @@
 import { airtableEnabled, core } from "@/lib/airtable";
 import { listPage } from "@/lib/airtable/client";
 import { resolveBaseId } from "@/lib/airtable/config";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { normalizeEngagementType } from "./engagementProfile";
 import { computeJobRag } from "./jobRag";
@@ -54,7 +54,7 @@ function linksTo(v: unknown, recordId: string): boolean {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<JobListView[]> {
-  const jobs = await prisma.platJob.findMany({
+  const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { updatedAt: "desc" },
     include: { _count: { select: { conPhases: true, actions: true, conRisks: true } } },

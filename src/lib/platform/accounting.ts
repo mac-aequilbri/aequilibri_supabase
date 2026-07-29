@@ -9,7 +9,7 @@
 // The per-org authorization-code flow (each customer connecting their own
 // Xero) is the next step on this same interface.
 
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { encryptSecret, decryptSecret } from "./crypto";
 import type { OrgCtx } from "./types";
 
@@ -164,16 +164,16 @@ export async function saveAccountingToken(
   orgName = "",
 ): Promise<void> {
   const encrypted = encryptSecret(token);
-  const existing = await prisma.platConAccountingConnection.findFirst({
+  const existing = await db(ctx).platConAccountingConnection.findFirst({
     where: { orgId: ctx.orgId },
   });
   if (existing) {
-    await prisma.platConAccountingConnection.update({
+    await db(ctx).platConAccountingConnection.update({
       where: { id: existing.id },
       data: { provider, status: "connected", accessToken: encrypted, orgName },
     });
   } else {
-    await prisma.platConAccountingConnection.create({
+    await db(ctx).platConAccountingConnection.create({
       data: { orgId: ctx.orgId, provider, status: "connected", accessToken: encrypted, orgName },
     });
   }
@@ -182,7 +182,7 @@ export async function saveAccountingToken(
 /** Decrypt and return an org's accounting token, or null if none/unreadable.
  *  A decrypt failure (tamper, key rotation, legacy plaintext) fails closed. */
 export async function loadAccountingToken(ctx: OrgCtx): Promise<string | null> {
-  const conn = await prisma.platConAccountingConnection.findFirst({
+  const conn = await db(ctx).platConAccountingConnection.findFirst({
     where: { orgId: ctx.orgId },
   });
   if (!conn || !conn.accessToken) return null;

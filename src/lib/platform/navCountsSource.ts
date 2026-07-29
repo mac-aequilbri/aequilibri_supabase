@@ -18,7 +18,7 @@ import {
   saveMetricsSnapshot,
   type OrgMetricsSnapshot,
 } from "@/lib/platform/controlPlane";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { logger, errMeta } from "@/lib/logger";
 import { loadOrgHighlights } from "./orgHighlightsSource";
 import { currentJobScope } from "./rls";
@@ -84,16 +84,16 @@ async function fromAirtable(ctx: OrgCtx): Promise<NavCounts> {
 
 async function fromPostgres(ctx: OrgCtx, f: Record<string, boolean>): Promise<NavCounts> {
   const [jobs, pending, openActions, openRisks, openVariations] = await Promise.all([
-    prisma.platJob.count({ where: { orgId: ctx.orgId } }),
-    prisma.platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed" } }),
-    prisma.platActionHub.count({
+    db(ctx).platJob.count({ where: { orgId: ctx.orgId } }),
+    db(ctx).platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed" } }),
+    db(ctx).platActionHub.count({
       where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] } },
     }),
     f.risks
-      ? prisma.platConRisk.count({ where: { orgId: ctx.orgId, status: "open" } })
+      ? db(ctx).platConRisk.count({ where: { orgId: ctx.orgId, status: "open" } })
       : Promise.resolve(0),
     f.variations
-      ? prisma.platConVariationOrder.count({ where: { orgId: ctx.orgId, status: "submitted" } })
+      ? db(ctx).platConVariationOrder.count({ where: { orgId: ctx.orgId, status: "submitted" } })
       : Promise.resolve(0),
   ]);
   return { jobs, pending, openActions, openRisks, openVariations };

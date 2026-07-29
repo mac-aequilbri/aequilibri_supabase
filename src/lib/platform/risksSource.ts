@@ -4,7 +4,7 @@
 // remapping is needed. First Domain-tier page wired to Airtable.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { loadJobLabelMap } from "./jobOptionsSource";
 import { recordInScope, scopeByJob } from "./rls";
 import type { EditorValues } from "./recordEditor";
@@ -50,7 +50,7 @@ function firstLink(v: unknown): string | null {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<RiskView[]> {
-  const risks = await prisma.platConRisk.findMany({
+  const risks = await db(ctx).platConRisk.findMany({
     where: { orgId: ctx.orgId },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     include: { job: { select: { code: true } } },
@@ -127,7 +127,7 @@ export async function loadRiskDetail(ctx: OrgCtx, id: string): Promise<EditorVal
       status: str(r["Status"]) || "open",
     };
   }
-  const r = await prisma.platConRisk.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const r = await db(ctx).platConRisk.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!r) return null;
   if (!(await recordInScope(ctx, r))) return null;
   return {

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { STATUS_MAP_REF_TYPE, isAppStatus, normStatusKey } from "@/lib/platform/actionStatus";
 import { formToObject } from "@/lib/platform/forms";
 import { getCurrentUser, requireOrgCtx } from "@/lib/platform/org-context";
@@ -79,16 +79,16 @@ export async function saveStatusMapping(formData: FormData): Promise<void> {
     if (existing) await core.update(ctx.orgSlug, "PLAT_CFG_REFERENCE", existing.id, fields);
     else await core.create(ctx.orgSlug, "PLAT_CFG_REFERENCE", fields);
   } else {
-    const existing = await prisma.platCfgReference.findFirst({
+    const existing = await db(ctx).platCfgReference.findFirst({
       where: { orgId: ctx.orgId, type: STATUS_MAP_REF_TYPE, code },
     });
     if (existing) {
-      await prisma.platCfgReference.update({
+      await db(ctx).platCfgReference.update({
         where: { id: existing.id },
         data: { value: status, name: raw, isActive: true },
       });
     } else {
-      await prisma.platCfgReference.create({
+      await db(ctx).platCfgReference.create({
         data: { orgId: ctx.orgId, type: STATUS_MAP_REF_TYPE, code, name: raw, value: status, sortOrder: 0 },
       });
     }

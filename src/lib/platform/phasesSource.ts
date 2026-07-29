@@ -5,7 +5,7 @@
 // workflow stays Postgres-only (its actions no-op against Airtable string ids).
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { recordInScope, scopeByJob } from "./rls";
 import type { EditorValues } from "./recordEditor";
 import type { OrgCtx } from "./types";
@@ -56,7 +56,7 @@ function num(v: unknown): number {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<JobPhases[]> {
-  const jobs = await prisma.platJob.findMany({
+  const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { code: "asc" },
     include: {
@@ -158,7 +158,7 @@ export async function loadPhaseDetail(ctx: OrgCtx, id: string): Promise<EditorVa
       sortOrder: num(p["Sort_Order"]),
     };
   }
-  const p = await prisma.platConPhase.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const p = await db(ctx).platConPhase.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!p) return null;
   if (!(await recordInScope(ctx, p))) return null;
   return {

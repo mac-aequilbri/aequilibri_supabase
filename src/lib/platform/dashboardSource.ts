@@ -5,7 +5,7 @@
 // PENDING_WRITES in Airtable mode.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { getActiveRules } from "@/services/platform/learning";
 import { toNum } from "@/lib/format";
 import { resolveActionStatus } from "./actionStatus";
@@ -196,25 +196,25 @@ async function fromPostgres(ctx: OrgCtx): Promise<DashboardView> {
   const ownW = ids ? { id: { in: ids } } : scope.mode === "none" ? { id: -1 } : {};
   const [jobs, openActions, overdueActions, pendingProposals, budgetAgg, recentLogs, activeRules] =
     await Promise.all([
-      prisma.platJob.findMany({ where: { orgId: ctx.orgId, ...ownW }, orderBy: { updatedAt: "desc" }, take: 6 }),
-      prisma.platActionHub.count({ where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, ...jobW } }),
-      prisma.platActionHub.count({
+      db(ctx).platJob.findMany({ where: { orgId: ctx.orgId, ...ownW }, orderBy: { updatedAt: "desc" }, take: 6 }),
+      db(ctx).platActionHub.count({ where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, ...jobW } }),
+      db(ctx).platActionHub.count({
         where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, dueDate: { lt: new Date() }, ...jobW },
       }),
-      prisma.platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed", ...jobW } }),
-      prisma.platConBudgetLine.aggregate({
+      db(ctx).platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed", ...jobW } }),
+      db(ctx).platConBudgetLine.aggregate({
         where: { orgId: ctx.orgId, ...jobW },
         _sum: { budgetAmount: true, actualAmount: true },
       }),
-      prisma.platExecutionLog.findMany({ where: { orgId: ctx.orgId }, orderBy: { createdAt: "desc" }, take: 8 }),
-      prisma.platLearningRule.count({ where: { orgId: ctx.orgId, isActive: true } }),
+      db(ctx).platExecutionLog.findMany({ where: { orgId: ctx.orgId }, orderBy: { createdAt: "desc" }, take: 8 }),
+      db(ctx).platLearningRule.count({ where: { orgId: ctx.orgId, isActive: true } }),
     ]);
 
   // Spec 12 ledger (PlatConCashflowLedger, migration-plan Phase 2): Paid rows
   // are actual, the rest projected; amounts signed by direction (Out
   // subtracts) so the chart shows net cash position, matching the cashflow
   // window and the Airtable branch above.
-  const cashflows = await prisma.platConCashflowLedger.findMany({
+  const cashflows = await db(ctx).platConCashflowLedger.findMany({
     where: { orgId: ctx.orgId, ...jobW },
     select: { period: true, type: true, amount: true, status: true },
   });

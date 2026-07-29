@@ -1,7 +1,7 @@
 // Client portal token management — issue and revoke unauthenticated
 // read-only links (/portal/<token>).
 
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { CopyButton } from "@/components/CopyButton";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmSubmitButton } from "@/components/form/ConfirmSubmitButton";
@@ -35,12 +35,12 @@ export default async function PortalPage({
   const jobWhere = ids ? { orgId: ctx.orgId, id: { in: ids } } : scope.mode === "none" ? { orgId: ctx.orgId, id: -1 } : { orgId: ctx.orgId };
   const tokWhere = ids ? { orgId: ctx.orgId, jobId: { in: ids } } : scope.mode === "none" ? { orgId: ctx.orgId, jobId: -1 } : { orgId: ctx.orgId };
   const [jobs, tokens] = await Promise.all([
-    prisma.platJob.findMany({
+    db(ctx).platJob.findMany({
       where: jobWhere,
       select: { id: true, code: true, name: true },
       orderBy: { code: "asc" },
     }),
-    prisma.platConPortalToken.findMany({
+    db(ctx).platConPortalToken.findMany({
       where: tokWhere,
       orderBy: { createdAt: "desc" },
       include: { job: { select: { code: true, name: true } } },

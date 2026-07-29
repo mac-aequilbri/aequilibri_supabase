@@ -3,7 +3,7 @@
 
 import { airtableEnabled, core } from "@/lib/airtable";
 import { callClaude } from "@/lib/claude";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { VARIATION_FILTER } from "@/lib/platform/changeLog";
 import { emitCorrection } from "@/lib/platform/corrections";
 import { loadJobContext } from "@/lib/platform/jobContextSource";
@@ -31,7 +31,7 @@ async function nextRefNumber(ctx: OrgCtx, jobId: RecordId): Promise<string> {
   }
   // Max existing suffix + 1 — count-based numbering duplicates after deletes.
   const numId = Number(jobId);
-  const existing = await prisma.platConVariationOrder.findMany({
+  const existing = await db(ctx).platConVariationOrder.findMany({
     where: { orgId: ctx.orgId, jobId: numId },
     select: { refNumber: true },
   });
@@ -157,7 +157,7 @@ export async function approveVariation(
     return;
   }
 
-  const vo = await prisma.platConVariationOrder.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const vo = await db(ctx).platConVariationOrder.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!vo) throw new Error("Variation not found");
 
   const finalCost = edits.costImpact ?? toNum(vo.costImpact);

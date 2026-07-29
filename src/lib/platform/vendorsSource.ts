@@ -6,7 +6,7 @@
 // don't have it, so the list read must tolerate the missing-table 403.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { listOptional } from "./optionalList";
 import type { EditorValues } from "./recordEditor";
 import type { OrgCtx } from "./types";
@@ -26,7 +26,7 @@ function str(v: unknown): string {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<VendorView[]> {
-  const vendors = await prisma.platConVendor.findMany({
+  const vendors = await db(ctx).platConVendor.findMany({
     where: { orgId: ctx.orgId },
     orderBy: [{ isActive: "desc" }, { name: "asc" }],
   });
@@ -80,7 +80,7 @@ export async function loadVendorDetail(ctx: OrgCtx, id: string): Promise<EditorV
       isActive: r["Is_Active"] === true,
     };
   }
-  const v = await prisma.platConVendor.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const v = await db(ctx).platConVendor.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!v) return null;
   return {
     name: v.name,

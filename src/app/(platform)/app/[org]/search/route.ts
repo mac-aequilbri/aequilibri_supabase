@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { VARIATION_FILTER } from "@/lib/platform/changeLog";
 import { requireOrgCtx } from "@/lib/platform/org-context";
 import { listOptional } from "@/lib/platform/optionalList";
@@ -105,7 +105,7 @@ export async function GET(
   const where = { orgId: ctx.orgId };
   const [jobs, actions, risks, decisions, variations, documents, vendors, quotes] =
     await Promise.all([
-      prisma.platJob.findMany({
+      db(ctx).platJob.findMany({
         // Case-insensitive to match the Airtable branch above, which lowercases
         // both sides — without `mode` Postgres `contains` is case-sensitive, so
         // "maleny" found nothing while "Maleny" did.
@@ -119,37 +119,37 @@ export async function GET(
         take,
         orderBy: { updatedAt: "desc" },
       }),
-      prisma.platActionHub.findMany({
+      db(ctx).platActionHub.findMany({
         where: { ...where, title: { contains: q } },
         take,
         orderBy: { updatedAt: "desc" },
       }),
-      prisma.platConRisk.findMany({
+      db(ctx).platConRisk.findMany({
         where: { ...where, description: { contains: q } },
         take,
         orderBy: { createdAt: "desc" },
       }),
-      prisma.platDecision.findMany({
+      db(ctx).platDecision.findMany({
         where: { ...where, description: { contains: q } },
         take,
         orderBy: { createdAt: "desc" },
       }),
-      prisma.platConVariationOrder.findMany({
+      db(ctx).platConVariationOrder.findMany({
         where: { ...where, OR: [{ title: { contains: q } }, { refNumber: { contains: q } }] },
         take,
         orderBy: { createdAt: "desc" },
       }),
-      prisma.platDocument.findMany({
+      db(ctx).platDocument.findMany({
         where: { ...where, title: { contains: q } },
         take,
         orderBy: { createdAt: "desc" },
       }),
-      prisma.platConVendor.findMany({
+      db(ctx).platConVendor.findMany({
         where: { ...where, name: { contains: q } },
         take,
         orderBy: { name: "asc" },
       }),
-      prisma.platConQuote.findMany({
+      db(ctx).platConQuote.findMany({
         where: { ...where, OR: [{ title: { contains: q } }, { refNumber: { contains: q } }] },
         take,
         orderBy: { createdAt: "desc" },

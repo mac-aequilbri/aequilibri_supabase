@@ -11,7 +11,7 @@
 // inert.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { STATUS_MAP_REF_TYPE, isAppStatus, normStatusKey, type AppStatus } from "./actionStatus";
 import { listOptional } from "./optionalList";
 import type { OrgCtx } from "./types";
@@ -45,7 +45,7 @@ async function pgFallback(label: string, read: () => Promise<RefOption[]>): Prom
 }
 
 async function referencesFromPostgres(ctx: OrgCtx, type: string): Promise<RefOption[]> {
-  const rows = await prisma.platCfgReference.findMany({
+  const rows = await db(ctx).platCfgReference.findMany({
     where: { orgId: ctx.orgId, type, isActive: true },
     orderBy: { sortOrder: "asc" },
   });
@@ -67,7 +67,7 @@ export async function loadReferenceOptions(ctx: OrgCtx, type: string): Promise<R
 }
 
 async function vendorsFromPostgres(ctx: OrgCtx): Promise<RefOption[]> {
-  const rows = await prisma.platConVendor.findMany({
+  const rows = await db(ctx).platConVendor.findMany({
     where: { orgId: ctx.orgId, isActive: true },
     select: { id: true, name: true },
     orderBy: { name: "asc" },
@@ -96,7 +96,7 @@ export async function loadVendorOptions(ctx: OrgCtx): Promise<RefOption[]> {
  *  value. An empty map is valid — it just means nothing's been mapped yet, so
  *  unknown statuses stay flagged rather than silently miscounted. */
 async function statusMapFromPostgres(ctx: OrgCtx): Promise<Map<string, AppStatus>> {
-  const rows = await prisma.platCfgReference.findMany({
+  const rows = await db(ctx).platCfgReference.findMany({
     where: { orgId: ctx.orgId, type: STATUS_MAP_REF_TYPE, isActive: true },
   });
   const map = new Map<string, AppStatus>();

@@ -9,7 +9,7 @@
 import { airtableEnabled, core } from "@/lib/airtable";
 import { airtableMapFor, toFields } from "@/lib/airtable/fieldMaps";
 import { callClaude } from "@/lib/claude";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { emitCorrection } from "@/lib/platform/corrections";
 import { geocodeProviders } from "@/lib/platform/geocode";
 import { mulMoney, sumMoney } from "@/lib/platform/money";
@@ -316,11 +316,11 @@ export async function runConstructionAssessment(
     const rec = await core.create(ctx.orgSlug, map.table, toFields(map, data, "create"));
     assessmentId = rec.id;
   } else {
-    const row = await prisma.platAssessment.create({ data: { orgId: ctx.orgId, ...data } });
+    const row = await db(ctx).platAssessment.create({ data: { orgId: ctx.orgId, ...data } });
     assessmentId = row.id;
   }
 
-  await prisma.platExecutionLog
+  await db(ctx).platExecutionLog
     .create({
       data: {
         orgId: ctx.orgId,
@@ -360,7 +360,7 @@ async function readAssessment(
       return null;
     }
   }
-  const row = await prisma.platAssessment.findFirst({
+  const row = await db(ctx).platAssessment.findFirst({
     where: { id: Number(assessmentId), orgId: ctx.orgId },
   });
   if (!row) return null;
@@ -383,7 +383,7 @@ async function updateAssessmentResult(
     });
     return;
   }
-  await prisma.platAssessment.update({
+  await db(ctx).platAssessment.update({
     where: { id: Number(assessmentId) },
     data: { result: JSON.stringify(stored) },
   });
@@ -409,7 +409,7 @@ export async function setAssessmentStatus(
     await core.update(ctx.orgSlug, map.table, String(assessmentId), toFields(map, { status }, "update"));
     return;
   }
-  await prisma.platAssessment.update({
+  await db(ctx).platAssessment.update({
     where: { id: Number(assessmentId) },
     data: { status },
   });
@@ -479,7 +479,7 @@ async function createJobWithCode(
   // meaningful in Postgres mode — skip the read otherwise (no Postgres in prod).
   let max = 0;
   if (!airtableEnabled(ctx)) {
-    const jobs = await prisma.platJob.findMany({
+    const jobs = await db(ctx).platJob.findMany({
       where: { orgId: ctx.orgId },
       select: { code: true },
     });
@@ -614,7 +614,7 @@ export async function materializeProjectFromAssessment(
       toFields(map, { status: "accepted", jobId }, "update"),
     );
   } else {
-    await prisma.platAssessment.update({
+    await db(ctx).platAssessment.update({
       where: { id: Number(assessmentId) },
       data: { status: "accepted", jobId: pgJobId ?? null },
     });

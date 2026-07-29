@@ -4,7 +4,7 @@
 // This is the step UC2/UC3 never had: tagged chat outputs become real
 // database rows.
 
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { airtableEnabled, core } from "@/lib/airtable";
 import type { ToolUse } from "@/lib/claude";
 import { writeRecord, WritableTable, type RecordId } from "@/lib/platform/recordWriter";
@@ -30,32 +30,32 @@ export function requiresApproval(authority: AiAuthority, risk: string): boolean 
 }
 
 const QUERYABLE = {
-  jobs: () =>
-    ({ model: prisma.platJob, select: { id: true, code: true, name: true, engagementType: true, status: true, completionPct: true, budgetTotal: true } }),
-  actions: () =>
-    ({ model: prisma.platActionHub, select: { id: true, jobId: true, title: true, priority: true, status: true, owner: true, dueDate: true } }),
-  decisions: () =>
-    ({ model: prisma.platDecision, select: { id: true, jobId: true, description: true, status: true, madeBy: true, category: true } }),
-  phases: () =>
-    ({ model: prisma.platConPhase, select: { id: true, jobId: true, name: true, status: true, completionPct: true, sortOrder: true, isAiDraft: true } }),
-  budget_lines: () =>
-    ({ model: prisma.platConBudgetLine, select: { id: true, jobId: true, phaseId: true, category: true, description: true, budgetAmount: true, committedAmount: true, actualAmount: true } }),
+  jobs: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platJob, select: { id: true, code: true, name: true, engagementType: true, status: true, completionPct: true, budgetTotal: true } }),
+  actions: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platActionHub, select: { id: true, jobId: true, title: true, priority: true, status: true, owner: true, dueDate: true } }),
+  decisions: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platDecision, select: { id: true, jobId: true, description: true, status: true, madeBy: true, category: true } }),
+  phases: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platConPhase, select: { id: true, jobId: true, name: true, status: true, completionPct: true, sortOrder: true, isAiDraft: true } }),
+  budget_lines: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platConBudgetLine, select: { id: true, jobId: true, phaseId: true, category: true, description: true, budgetAmount: true, committedAmount: true, actualAmount: true } }),
   // Legacy shape — cashflow writes are Airtable-only (Spec 12 ledger); this
   // Postgres read only surfaces pre-migration/seeded rows.
-  cashflows: () =>
-    ({ model: prisma.platConCashflow, select: { id: true, jobId: true, period: true, projected: true, actual: true } }),
-  risks: () =>
-    ({ model: prisma.platConRisk, select: { id: true, jobId: true, description: true, likelihood: true, impact: true, status: true, owner: true } }),
-  variations: () =>
-    ({ model: prisma.platConVariationOrder, select: { id: true, jobId: true, refNumber: true, title: true, costImpact: true, timeImpactDays: true, status: true } }),
-  procurement: () =>
-    ({ model: prisma.platConProcurement, select: { id: true, jobId: true, item: true, vendorName: true, total: true, status: true, dueDate: true } }),
-  vendors: () =>
-    ({ model: prisma.platConVendor, select: { id: true, name: true, category: true, rating: true, isActive: true } }),
-  learning_rules: () =>
-    ({ model: prisma.platLearningRule, select: { id: true, ruleCode: true, kind: true, description: true, confidence: true, isActive: true } }),
-  documents: () =>
-    ({ model: prisma.platDocument, select: { id: true, jobId: true, title: true, docType: true, status: true, uploadedBy: true, version: true } }),
+  cashflows: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platConCashflow, select: { id: true, jobId: true, period: true, projected: true, actual: true } }),
+  risks: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platConRisk, select: { id: true, jobId: true, description: true, likelihood: true, impact: true, status: true, owner: true } }),
+  variations: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platConVariationOrder, select: { id: true, jobId: true, refNumber: true, title: true, costImpact: true, timeImpactDays: true, status: true } }),
+  procurement: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platConProcurement, select: { id: true, jobId: true, item: true, vendorName: true, total: true, status: true, dueDate: true } }),
+  vendors: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platConVendor, select: { id: true, name: true, category: true, rating: true, isActive: true } }),
+  learning_rules: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platLearningRule, select: { id: true, ruleCode: true, kind: true, description: true, confidence: true, isActive: true } }),
+  documents: (ctx: OrgCtx) =>
+    ({ model: db(ctx).platDocument, select: { id: true, jobId: true, title: true, docType: true, status: true, uploadedBy: true, version: true } }),
 } as const;
 
 async function runQuery(ctx: OrgCtx, input: Record<string, unknown>): Promise<string> {
@@ -109,7 +109,7 @@ async function runQuery(ctx: OrgCtx, input: Record<string, unknown>): Promise<st
   }
   const def = QUERYABLE[table as keyof typeof QUERYABLE];
   if (!def) return `Unknown table "${table}".`;
-  const { model, select } = def();
+  const { model, select } = def(ctx);
   const where: Record<string, unknown> = { orgId: ctx.orgId };
   const jobScoped = table !== "jobs" && table !== "vendors" && table !== "learning_rules";
   if (typeof input.jobId === "number" && jobScoped) where.jobId = input.jobId;

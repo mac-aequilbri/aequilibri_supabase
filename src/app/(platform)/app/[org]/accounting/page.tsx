@@ -2,7 +2,7 @@
 // Connection) when XERO_CLIENT_ID/SECRET are configured; demo ledger
 // otherwise. Read-only: nothing is ever written back to the ledger.
 
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { MetricCard, PageHeader, StatusBadge } from "@/components/PageHeader";
 import { ConfirmSubmitButton } from "@/components/form/ConfirmSubmitButton";
 import { SubmitButton } from "@/components/form/SubmitButton";
@@ -39,7 +39,7 @@ export default async function AccountingPage({
     );
   }
   const { error } = await searchParams;
-  const connection = await prisma.platConAccountingConnection.findFirst({
+  const connection = await db(ctx).platConAccountingConnection.findFirst({
     where: { orgId: ctx.orgId },
   });
 

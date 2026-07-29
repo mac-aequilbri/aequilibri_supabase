@@ -7,7 +7,7 @@
 // routes to Airtable or Postgres behind AIRTABLE_MIGRATION.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { loadJobContext } from "@/lib/platform/jobContextSource";
 import { loadQuoteDetail } from "@/lib/platform/quoteDetailSource";
@@ -47,7 +47,7 @@ async function nextQuoteRef(ctx: OrgCtx): Promise<string> {
       if (m) max = Math.max(max, Number(m[1]));
     }
   } else {
-    const quotes = await prisma.platConQuote.findMany({
+    const quotes = await db(ctx).platConQuote.findMany({
       where: { orgId: ctx.orgId },
       select: { refNumber: true },
     });
@@ -70,7 +70,7 @@ export async function recalcQuoteTotals(ctx: OrgCtx, quoteId: RecordId): Promise
     if (!quote) return;
     gstRate = num(quote["GST_Rate"]) || 10;
   } else {
-    const quote = await prisma.platConQuote.findFirst({
+    const quote = await db(ctx).platConQuote.findFirst({
       where: { id: Number(quoteId), orgId: ctx.orgId },
       include: { lines: true },
     });
@@ -274,7 +274,7 @@ async function nextLineSortOrder(ctx: OrgCtx, quoteId: RecordId): Promise<number
     const lines = await airtableQuoteLines(ctx, quoteId);
     return lines.reduce((m, l) => Math.max(m, num(l["Sort_Order"])), 0) + 1;
   }
-  const last = await prisma.platConQuoteLine.findFirst({
+  const last = await db(ctx).platConQuoteLine.findFirst({
     where: { quoteId: Number(quoteId) },
     orderBy: { sortOrder: "desc" },
     select: { sortOrder: true },
@@ -367,7 +367,7 @@ export async function setQuoteStatus(
     const linkedJobId = airtableEnabled(ctx)
       ? (await core.get(ctx.orgSlug, "QUOTES", String(quoteId)).catch(() => null))?.["Job"]
       : (
-          await prisma.platConQuote.findFirst({
+          await db(ctx).platConQuote.findFirst({
             where: { id: Number(quoteId), orgId: ctx.orgId },
             select: { jobId: true },
           })

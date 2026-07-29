@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { airtableEnabled, core } from "@/lib/airtable";
 import { airtableMapFor, toFields } from "@/lib/airtable/fieldMaps";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { logger, errMeta } from "@/lib/logger";
 import { Actor, OrgCtx } from "./types";
 import { emitOutboundEvent } from "./outbox";
@@ -52,7 +52,10 @@ interface TableDef {
   /** Prisma model delegate accessor. Omitted for Airtable-only Core tables
    *  (e.g. COMMS) that have no 1:1 Postgres model — those route exclusively
    *  through the field-map branch of performWrite, which never touches it. */
-  delegate?: () => {
+  /** Resolves the org's tenant client per call (§2b db(ctx)) — delegates
+   *  must never be captured at module load, or writes would pin to the
+   *  shared database regardless of the org's provisioned one. */
+  delegate?: (ctx: OrgCtx) => {
     create: (args: { data: Record<string, unknown> }) => Promise<{ id: number }>;
     findFirst: (args: { where: Record<string, unknown> }) => Promise<{ id: number } | null>;
     update: (args: {
@@ -69,7 +72,10 @@ interface TableDef {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const d = (m: any) => () => m as ReturnType<NonNullable<TableDef["delegate"]>>;
+const d =
+  (pick: (client: typeof prisma) => any) =>
+  (ctx: OrgCtx) =>
+    pick(db(ctx)) as ReturnType<NonNullable<TableDef["delegate"]>>;
 
 // Update schema = create schema with every field optional AND defaults
 // stripped — otherwise a partial update would silently reset omitted fields
@@ -436,33 +442,33 @@ const portalTokenSchema = z.object({
 });
 
 const REGISTRY = {
-  job: { physical: "plat_core_job", delegate: d(prisma.platJob), create: jobSchema, update: upd(jobSchema) },
-  contact: { physical: "plat_core_contact", delegate: d(prisma.platContact), create: contactSchema, update: upd(contactSchema) },
-  workstream: { physical: "plat_core_workstream", delegate: d(prisma.platWorkstream), create: workstreamSchema, update: upd(workstreamSchema) },
-  action: { physical: "plat_core_actionhub", delegate: d(prisma.platActionHub), create: actionSchema, update: upd(actionSchema) },
-  decision: { physical: "plat_core_decision", delegate: d(prisma.platDecision), create: decisionSchema, update: upd(decisionSchema) },
+  job: { physical: "plat_core_job", delegate: d((c) => c.platJob), create: jobSchema, update: upd(jobSchema) },
+  contact: { physical: "plat_core_contact", delegate: d((c) => c.platContact), create: contactSchema, update: upd(contactSchema) },
+  workstream: { physical: "plat_core_workstream", delegate: d((c) => c.platWorkstream), create: workstreamSchema, update: upd(workstreamSchema) },
+  action: { physical: "plat_core_actionhub", delegate: d((c) => c.platActionHub), create: actionSchema, update: upd(actionSchema) },
+  decision: { physical: "plat_core_decision", delegate: d((c) => c.platDecision), create: decisionSchema, update: upd(decisionSchema) },
   // Phase D: comms/plan gained Postgres mirrors (PlatComms/PlatConPlanTask,
   // Phase B) — the zod keys match the model columns 1:1, so the standard
   // delegate branch serves them when this org is on Postgres.
-  comms: { physical: "COMMS", delegate: d(prisma.platComms), create: commsSchema, update: upd(commsSchema) },
-  plan: { physical: "PLAN", delegate: d(prisma.platConPlanTask), create: planSchema, update: upd(planSchema) },
-  learning_rule: { physical: "plat_core_learningrule", delegate: d(prisma.platLearningRule), create: learningRuleSchema, update: upd(learningRuleSchema) },
-  document: { physical: "plat_core_document", delegate: d(prisma.platDocument), create: documentSchema, update: upd(documentSchema) },
-  phase: { physical: "plat_con_phase", delegate: d(prisma.platConPhase), create: phaseSchema, update: upd(phaseSchema) },
-  phase_evidence: { physical: "plat_con_phaseevidence", delegate: d(prisma.platConPhaseEvidence), create: phaseEvidenceSchema, update: upd(phaseEvidenceSchema) },
-  budget_line: { physical: "plat_con_budgetline", delegate: d(prisma.platConBudgetLine), create: budgetLineSchema, update: upd(budgetLineSchema) },
-  cashflow: { physical: "plat_con_cashflowledger", delegate: d(prisma.platConCashflowLedger), create: cashflowSchema, update: upd(cashflowSchema) },
-  risk: { physical: "plat_con_risk", delegate: d(prisma.platConRisk), create: riskSchema, update: upd(riskSchema) },
-  variation_order: { physical: "plat_con_variationorder", delegate: d(prisma.platConVariationOrder), create: variationSchema, update: upd(variationSchema) },
-  vendor: { physical: "plat_con_vendor", delegate: d(prisma.platConVendor), create: vendorSchema, update: upd(vendorSchema) },
-  procurement: { physical: "plat_con_procurement", delegate: d(prisma.platConProcurement), create: procurementSchema, update: upd(procurementSchema) },
-  room: { physical: "plat_con_roommatrix", delegate: d(prisma.platConRoomMatrix), create: roomSchema, update: upd(roomSchema) },
-  meeting_minutes: { physical: "plat_con_meetingminutes", delegate: d(prisma.platConMeetingMinutes), create: minutesSchema, update: upd(minutesSchema) },
-  weekly_report: { physical: "plat_con_weeklyreport", delegate: d(prisma.platConWeeklyReport), create: weeklyReportSchema, update: upd(weeklyReportSchema) },
-  bim_model: { physical: "plat_con_bimmodel", delegate: d(prisma.platConBimModel), create: bimModelSchema, update: upd(bimModelSchema) },
-  portal_token: { physical: "plat_con_portaltoken", delegate: d(prisma.platConPortalToken), create: portalTokenSchema, update: upd(portalTokenSchema) },
-  quote: { physical: "plat_con_quote", delegate: d(prisma.platConQuote), create: quoteSchema, update: upd(quoteSchema) },
-  quote_line: { physical: "plat_con_quoteline", delegate: d(prisma.platConQuoteLine), create: quoteLineSchema, update: upd(quoteLineSchema) },
+  comms: { physical: "COMMS", delegate: d((c) => c.platComms), create: commsSchema, update: upd(commsSchema) },
+  plan: { physical: "PLAN", delegate: d((c) => c.platConPlanTask), create: planSchema, update: upd(planSchema) },
+  learning_rule: { physical: "plat_core_learningrule", delegate: d((c) => c.platLearningRule), create: learningRuleSchema, update: upd(learningRuleSchema) },
+  document: { physical: "plat_core_document", delegate: d((c) => c.platDocument), create: documentSchema, update: upd(documentSchema) },
+  phase: { physical: "plat_con_phase", delegate: d((c) => c.platConPhase), create: phaseSchema, update: upd(phaseSchema) },
+  phase_evidence: { physical: "plat_con_phaseevidence", delegate: d((c) => c.platConPhaseEvidence), create: phaseEvidenceSchema, update: upd(phaseEvidenceSchema) },
+  budget_line: { physical: "plat_con_budgetline", delegate: d((c) => c.platConBudgetLine), create: budgetLineSchema, update: upd(budgetLineSchema) },
+  cashflow: { physical: "plat_con_cashflowledger", delegate: d((c) => c.platConCashflowLedger), create: cashflowSchema, update: upd(cashflowSchema) },
+  risk: { physical: "plat_con_risk", delegate: d((c) => c.platConRisk), create: riskSchema, update: upd(riskSchema) },
+  variation_order: { physical: "plat_con_variationorder", delegate: d((c) => c.platConVariationOrder), create: variationSchema, update: upd(variationSchema) },
+  vendor: { physical: "plat_con_vendor", delegate: d((c) => c.platConVendor), create: vendorSchema, update: upd(vendorSchema) },
+  procurement: { physical: "plat_con_procurement", delegate: d((c) => c.platConProcurement), create: procurementSchema, update: upd(procurementSchema) },
+  room: { physical: "plat_con_roommatrix", delegate: d((c) => c.platConRoomMatrix), create: roomSchema, update: upd(roomSchema) },
+  meeting_minutes: { physical: "plat_con_meetingminutes", delegate: d((c) => c.platConMeetingMinutes), create: minutesSchema, update: upd(minutesSchema) },
+  weekly_report: { physical: "plat_con_weeklyreport", delegate: d((c) => c.platConWeeklyReport), create: weeklyReportSchema, update: upd(weeklyReportSchema) },
+  bim_model: { physical: "plat_con_bimmodel", delegate: d((c) => c.platConBimModel), create: bimModelSchema, update: upd(bimModelSchema) },
+  portal_token: { physical: "plat_con_portaltoken", delegate: d((c) => c.platConPortalToken), create: portalTokenSchema, update: upd(portalTokenSchema) },
+  quote: { physical: "plat_con_quote", delegate: d((c) => c.platConQuote), create: quoteSchema, update: upd(quoteSchema) },
+  quote_line: { physical: "plat_con_quoteline", delegate: d((c) => c.platConQuoteLine), create: quoteLineSchema, update: upd(quoteLineSchema) },
 } satisfies Record<string, TableDef>;
 
 export type WritableTable = keyof typeof REGISTRY;
@@ -491,7 +497,7 @@ export async function readRecord(
   }
   const def: TableDef = REGISTRY[table];
   if (!def.delegate) return null; // Airtable-only table read via a numeric id — n/a
-  const row = await def.delegate().findFirst({
+  const row = await def.delegate(ctx).findFirst({
     where: { id: Number(recordId), orgId: ctx.orgId },
   });
   return (row as Record<string, unknown> | null) ?? null;
@@ -611,7 +617,7 @@ async function performWrite(
       `${table} is Airtable-only (no Postgres model); set AIRTABLE_MIGRATION=true`,
     );
   }
-  const delegate = def.delegate();
+  const delegate = def.delegate(ctx);
   if (def.pgOmit) {
     data = Object.fromEntries(Object.entries(data).filter(([k]) => !def.pgOmit!.includes(k)));
   }
@@ -704,7 +710,7 @@ async function writeExecutedLog(
     return undefined; // Airtable has no numeric audit id to thread
   }
   try {
-    const log = await prisma.platExecutionLog.create({
+    const log = await db(ctx).platExecutionLog.create({
       data: {
         orgId: ctx.orgId,
         jobId: args.jobId,
@@ -832,7 +838,7 @@ export async function writeRecord(ctx: OrgCtx, req: WriteRequest): Promise<Write
       });
       return { status: "proposed", proposalId: pending.id };
     }
-    const pending = await prisma.platPendingWrite.create({
+    const pending = await db(ctx).platPendingWrite.create({
       data: {
         orgId: ctx.orgId,
         jobId,
@@ -915,7 +921,7 @@ export async function writeRecord(ctx: OrgCtx, req: WriteRequest): Promise<Write
       recordId: req.recordId,
       ...errMeta(err),
     });
-    await prisma.platExecutionLog
+    await db(ctx).platExecutionLog
       .create({
         data: {
           orgId: ctx.orgId,
@@ -999,7 +1005,7 @@ async function resolvePending(ctx: OrgCtx, proposalId: RecordId): Promise<Pendin
       jobRef: proposalJobId(row["Job_Id"], payload),
     };
   }
-  const pending = await prisma.platPendingWrite.findFirst({
+  const pending = await db(ctx).platPendingWrite.findFirst({
     where: { id: Number(proposalId), orgId: ctx.orgId, status: "proposed" },
   });
   if (!pending) throw new Error("Proposal not found (already resolved?)");
@@ -1038,7 +1044,7 @@ async function executeProposalClaimed(
     // Atomic claim across instances: only one resolver may move the row out of
     // "proposed". A second concurrent approval matches zero rows and bails
     // before performing the write.
-    const claimed = await prisma.platPendingWrite.updateMany({
+    const claimed = await db(ctx).platPendingWrite.updateMany({
       where: { id: Number(pending.id), orgId: ctx.orgId, status: "proposed" },
       data: { status: "executing" },
     });
@@ -1053,7 +1059,7 @@ async function executeProposalClaimed(
         Resolved_At: new Date().toISOString(),
       });
     } else {
-      await prisma.platPendingWrite.update({
+      await db(ctx).platPendingWrite.update({
         where: { id: Number(pending.id) },
         data: { status: "expired", resolvedBy: approvedBy, resolvedAt: new Date() },
       });
@@ -1124,7 +1130,7 @@ async function executeProposalClaimed(
         Resolved_At: new Date().toISOString(),
       });
     } else {
-      await prisma.platPendingWrite.update({
+      await db(ctx).platPendingWrite.update({
         where: { id: Number(pending.id) },
         data: { status: "executed", resolvedBy: approvedBy, resolvedAt: new Date(), execLogId },
       });
@@ -1177,7 +1183,7 @@ async function executeProposalClaimed(
         Error: message,
       });
     } else {
-      await prisma.platPendingWrite.update({
+      await db(ctx).platPendingWrite.update({
         where: { id: Number(pending.id) },
         data: { status: "failed", resolvedBy: approvedBy, resolvedAt: new Date(), error: message },
       });
@@ -1230,12 +1236,12 @@ async function rejectProposalClaimed(
   }
   // Guarded on status so a reject racing an approval can't clobber an
   // already-executed proposal's terminal state.
-  const rejected = await prisma.platPendingWrite.updateMany({
+  const rejected = await db(ctx).platPendingWrite.updateMany({
     where: { id: Number(pending.id), orgId: ctx.orgId, status: "proposed" },
     data: { status: "rejected", resolvedBy: rejectedBy, resolvedAt: new Date(), error: reason },
   });
   if (rejected.count !== 1) throw new Error("Proposal not found (already resolved?)");
-  await prisma.platExecutionLog
+  await db(ctx).platExecutionLog
     .create({
       data: {
         orgId: ctx.orgId,

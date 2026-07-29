@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { formToObject } from "@/lib/platform/forms";
 import { getCurrentUser, requireOrgCtx } from "@/lib/platform/org-context";
 import { orgPath } from "@/lib/platform/paths";
@@ -75,7 +75,7 @@ export async function escalateHighRisks(formData: FormData): Promise<void> {
       await escalate(r.id);
     }
   } else {
-    const risks = await prisma.platConRisk.findMany({
+    const risks = await db(ctx).platConRisk.findMany({
       where: { orgId: ctx.orgId, status: "open", escalatedAt: null },
     });
     for (const r of risks) {

@@ -5,7 +5,7 @@
 // loaded separately from pendingWritesSource.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import type { OrgCtx } from "./types";
 
 export interface LogView {
@@ -26,7 +26,7 @@ function str(v: unknown): string {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<LogView[]> {
-  const logs = await prisma.platExecutionLog.findMany({
+  const logs = await db(ctx).platExecutionLog.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { createdAt: "desc" },
     take: 100,

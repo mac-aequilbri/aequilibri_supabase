@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import type { OrgCtx } from "@/lib/platform/types";
 import type { RecordId } from "@/lib/platform/recordWriter";
 import {
@@ -38,7 +38,7 @@ async function logCapabilityRun(
   result: Module3RunResult,
   payload: unknown,
 ): Promise<void> {
-  await prisma.platExecutionLog
+  await db(ctx).platExecutionLog
     .create({
       data: {
         orgId: ctx.orgId,

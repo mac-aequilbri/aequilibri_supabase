@@ -11,7 +11,7 @@
 //     by), so they are read from Postgres in BOTH modes.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import {
   deriveHypothesisType,
   HYPOTHESIS_TYPES,
@@ -96,7 +96,7 @@ function parseGaps(raw: string): string[] {
 }
 
 async function rulesFromPostgres(ctx: OrgCtx): Promise<RuleView[]> {
-  const rules = await prisma.platLearningRule.findMany({
+  const rules = await db(ctx).platLearningRule.findMany({
     where: { orgId: ctx.orgId },
     orderBy: [{ isActive: "desc" }, { confidence: "desc" }],
   });
@@ -161,12 +161,12 @@ interface EngineCounts {
 
 async function engineFromPostgres(ctx: OrgCtx): Promise<EngineCounts> {
   const [hypotheses, correctionsCount, unclustered] = await Promise.all([
-    prisma.platHypothesis.findMany({
+    db(ctx).platHypothesis.findMany({
       where: { orgId: ctx.orgId, status: { in: ["pending", "validated"] } },
       orderBy: { confidence: "desc" },
     }),
-    prisma.platCorrection.count({ where: { orgId: ctx.orgId } }),
-    prisma.platCorrection.count({ where: { orgId: ctx.orgId, hypothesisId: null } }),
+    db(ctx).platCorrection.count({ where: { orgId: ctx.orgId } }),
+    db(ctx).platCorrection.count({ where: { orgId: ctx.orgId, hypothesisId: null } }),
   ]);
   return {
     hypotheses: hypotheses.map((h) => {
@@ -226,7 +226,7 @@ async function engineFromAirtable(ctx: OrgCtx): Promise<EngineCounts> {
 }
 
 async function snapshotsFromPostgres(ctx: OrgCtx): Promise<SnapshotView[]> {
-  const snapshots = await prisma.platIntelligenceSnapshot.findMany({
+  const snapshots = await db(ctx).platIntelligenceSnapshot.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { capturedAt: "desc" },
     take: 24,

@@ -5,7 +5,7 @@
 // (loader returning a view model) is how the rest will follow.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { loadJobLabelMap } from "./jobOptionsSource";
 import { recordInScope, scopeByJob } from "./rls";
 import { dateInput, type EditorValues } from "./recordEditor";
@@ -31,7 +31,7 @@ function firstLink(v: unknown): string | null {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<DecisionView[]> {
-  const rows = await prisma.platDecision.findMany({
+  const rows = await db(ctx).platDecision.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { createdAt: "desc" },
     take: 2000,
@@ -112,7 +112,7 @@ export async function loadDecisionDetail(ctx: OrgCtx, id: string): Promise<Edito
       decidedAt: dateInput(str(r["Decision_Date"]) || null),
     };
   }
-  const d = await prisma.platDecision.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const d = await db(ctx).platDecision.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!d) return null;
   if (!(await recordInScope(ctx, d))) return null;
   return {

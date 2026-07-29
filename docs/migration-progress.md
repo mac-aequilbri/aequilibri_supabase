@@ -347,15 +347,42 @@ The §2b rule 1 split, executed exactly along the db.ts guard-regex line:
   clients. Suite: 40 files / 304 tests green; tsc clean; app boots and
   serves.
 
-### Stage B4 — remaining §2b work (next)
-- **The prisma.* → db(ctx) call-site sweep** (~150 tenant call sites on the
-  Phase D threading). Until it completes, NO org may be activated onto its
-  own database (split-brain risk — documented on the seam and in the
-  provisioning script; nothing is activated today).
-- Diagnostics page: surface tenant-client cache size + per-org DB status.
-- Owner decisions pending: Uc1* placement confirmed (stays in tenant
-  schema, served by the default DB); tenant-URL encryption at rest before
-  production (PLATFORM_ENCRYPTION_KEY) — Phase 7.
+### Stage B4 — the prisma.* → db(ctx) call-site sweep (2026-07-29) — DONE
+**Phase 3 / §2b is now functionally complete.** 232 tenant-model call sites
+across 58 files moved onto the db(ctx) resolver (codemod + tsc-driven triage);
+tests keep `prisma` by design (they run against non-activated orgs).
+Hand-fixed cases worth knowing:
+- **recordWriter REGISTRY delegates** were captured at module load — they'd
+  have pinned all writes to the shared DB forever. `d()` now resolves
+  `db(ctx)` per call (`delegate(ctx)`), incl. audit-log + pending-write rows.
+- **assistant executor QUERYABLE** map: same module-load capture, same fix.
+- **scheduler**: `wantsAutoReports` takes ctx; the post-run summary write was
+  a cross-org `createMany` — now per-org rows into each org's own DB.
+- **diagnostics ROWS** count callbacks take ctx.
+- **Public portal page**: token lookup stays deliberately cross-org on
+  `prismaUnscoped` (searches the DEFAULT tenant DB only — see caveat below);
+  the domain reads after it resolve the org's DB via its registry row.
+- One type-level `typeof prisma...` kept (types identical across clients);
+  documents.ingest test's db mock extended with `db: () => client`.
+
+**Full-stack isolation proof:** with tenant-e2e reactivated, the APP served
+`/app/tenant-e2e/projects` from `aequilibri_t_tenant_e2e` (its own database,
+through org-context → db(ctx)) while `/app/demo-walk/projects` served from
+the shared DB — no cross-contamination either way. Scratch org deactivated
+again after the proof. Gates: tsc clean, 304/304 tests, app boots.
+
+### Known caveats carried forward
+1. **Portal-token lookup** searches the default tenant DB only — before any
+   org WITH PORTAL TOKENS is activated onto its own database, token
+   resolution needs a control-side index (Phase 5 activation checklist).
+2. Org **activation runbook** (Phase 5): provision DB → mover copies the
+   org's rows into it → `--activate` → delete the org's rows from the shared
+   DB. The mover currently writes to DATABASE_URL; give it a `--target-url`
+   (or read the org's tenantDatabaseUrl) in Phase 4/5.
+3. Tenant-URL encryption at rest + non-superuser app role (RLS effectiveness)
+   — Phase 7 hardening.
+4. Uc1* stays in the tenant schema, served by the default DB (org-less
+   legacy demo) — confirmed direction, owner veto welcome.
 Execution order chosen so every step keeps the app green:
 
 1. **Split the Prisma schemas.** `prisma/schema.prisma` stays the TENANT

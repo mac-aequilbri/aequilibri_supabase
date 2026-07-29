@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/PageHeader";
 import { SubmitButton } from "@/components/form/SubmitButton";
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { loadJobDetail } from "@/lib/platform/jobDetailSource";
 import { requireOrgCtx } from "@/lib/platform/org-context";
 import { currentJobScope, inScope } from "@/lib/platform/rls";
@@ -22,7 +22,7 @@ export default async function EditProjectPage({
   // RLS: can't edit a project you're not assigned to (matches the view page).
   if (!inScope(await currentJobScope(ctx), detail.id)) notFound();
   const pgJob = !airtableEnabled(ctx)
-    ? await prisma.platJob.findFirst({ where: { id: Number(id), orgId: ctx.orgId } })
+    ? await db(ctx).platJob.findFirst({ where: { id: Number(id), orgId: ctx.orgId } })
     : null;
   const airJob = airtableEnabled(ctx) ? await core.get(ctx.orgSlug, "JOBS", detail.id).catch(() => null) : null;
   const job = {

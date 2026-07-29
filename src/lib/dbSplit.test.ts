@@ -16,32 +16,28 @@ const base = {
   aiAuthority: "approve_required" as const,
 };
 
+// Built via intermediate consts so TS's excess-property check doesn't fire —
+// production callers pass a full OrgCtx, which is structurally compatible.
+const plainConfig: { tenantDatabaseUrl?: string; assistant: object; features: object } = {
+  assistant: { name: "t", persona: "t" },
+  features: {},
+};
+
 describe("db(ctx) tenant resolution", () => {
   it("routes to the shared client without a tenantDatabaseUrl", () => {
-    expect(db({ ...base, config: { assistant: { name: "t", persona: "t" }, features: {} } })).toBe(prisma);
-    expect(dbUnscoped({ ...base, config: { assistant: { name: "t", persona: "t" }, features: {} } })).toBe(
-      prismaUnscoped,
-    );
+    expect(db({ ...base, config: plainConfig })).toBe(prisma);
+    expect(dbUnscoped({ ...base, config: plainConfig })).toBe(prismaUnscoped);
   });
 
   it("treats a URL equal to DATABASE_URL as the shared client (no extra pool)", () => {
-    const ctx = {
-      ...base,
-      config: {
-        assistant: { name: "t", persona: "t" },
-        features: {},
-        tenantDatabaseUrl: process.env.DATABASE_URL,
-      },
-    };
-    expect(db(ctx)).toBe(prisma);
+    const config = { ...plainConfig, tenantDatabaseUrl: process.env.DATABASE_URL };
+    expect(db({ ...base, config })).toBe(prisma);
   });
 
   it("resolves a provisioned org to a distinct, cached client", () => {
     const url = "postgresql://aequilibri:aequilibri@localhost:5432/db_split_test_fake?schema=public";
-    const ctx = {
-      ...base,
-      config: { assistant: { name: "t", persona: "t" }, features: {}, tenantDatabaseUrl: url },
-    };
+    const config = { ...plainConfig, tenantDatabaseUrl: url };
+    const ctx = { ...base, config };
     const before = tenantClientCacheSize();
     const a = db(ctx);
     expect(a).not.toBe(prisma);

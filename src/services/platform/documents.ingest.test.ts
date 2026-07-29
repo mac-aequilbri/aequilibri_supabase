@@ -19,12 +19,15 @@ vi.mock("@/lib/airtable", () => ({
   core: { list: vi.fn(), get: vi.fn() },
 }));
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  const client = {
     platDocument: { findFirst: h.docFindFirst, findMany: h.docFindMany },
     platJob: { findMany: h.jobFindMany },
-  },
-}));
+  };
+  // db(ctx) resolves to the same stub — these tests run against a
+  // non-activated org (shared tenant DB).
+  return { prisma: client, db: () => client };
+});
 
 vi.mock("@/lib/platform/recordWriter", () => ({ writeRecord: h.writeRecord }));
 

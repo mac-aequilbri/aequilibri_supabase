@@ -9,7 +9,7 @@
 // extra bookkeeping.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { OrgCtx } from "@/lib/platform/types";
 
 export interface PhaseTemplate {
@@ -89,7 +89,7 @@ export async function derivePhaseTemplate(
     };
   }
 
-  const jobs = await prisma.platJob.findMany({
+  const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId, engagementType: opts.engagementType },
     orderBy: { createdAt: "desc" },
     include: {

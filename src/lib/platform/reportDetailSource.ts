@@ -1,5 +1,5 @@
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { parseReportModule8, type ReportPromptSpec } from "./reportDoc";
 import { recordInScope } from "./rls";
 import type { OrgCtx } from "./types";
@@ -38,7 +38,7 @@ function firstLink(v: unknown): string | null {
 async function fromPostgres(ctx: OrgCtx, id: string): Promise<ReportDetailView | null> {
   const reportId = Number(id);
   if (!Number.isInteger(reportId)) return null;
-  const report = await prisma.platConWeeklyReport.findFirst({
+  const report = await db(ctx).platConWeeklyReport.findFirst({
     where: { id: reportId, orgId: ctx.orgId },
     include: { job: { select: { code: true, name: true } } },
   });

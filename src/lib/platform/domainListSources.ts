@@ -6,7 +6,7 @@
 
 import { airtableEnabled, core } from "@/lib/airtable";
 import type { CoreRow } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { VARIATION_FILTER, variationStatusFromAir } from "./changeLog";
 import { loadJobLabelMap } from "./jobOptionsSource";
@@ -45,7 +45,7 @@ export async function loadVariations(ctx: OrgCtx): Promise<VariationView[]> {
 }
 async function loadVariationsInner(ctx: OrgCtx): Promise<VariationView[]> {
   if (!airtableEnabled(ctx)) {
-    const rows = await prisma.platConVariationOrder.findMany({
+    const rows = await db(ctx).platConVariationOrder.findMany({
       where: { orgId: ctx.orgId },
       orderBy: { createdAt: "desc" },
       include: { job: { select: { code: true } } },
@@ -104,7 +104,7 @@ export async function loadRoomMatrix(ctx: OrgCtx): Promise<RoomView[]> {
 }
 async function loadRoomMatrixInner(ctx: OrgCtx): Promise<RoomView[]> {
   if (!airtableEnabled(ctx)) {
-    const rows = await prisma.platConRoomMatrix.findMany({
+    const rows = await db(ctx).platConRoomMatrix.findMany({
       where: { orgId: ctx.orgId },
       orderBy: [{ zone: "asc" }, { name: "asc" }],
       include: { job: { select: { code: true } } },
@@ -152,7 +152,7 @@ export async function loadRoomDetail(ctx: OrgCtx, id: string): Promise<EditorVal
       ceilingHeight: str(r["Ceiling_Height"]),
     };
   }
-  const r = await prisma.platConRoomMatrix.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const r = await db(ctx).platConRoomMatrix.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!r) return null;
   if (!(await recordInScope(ctx, r))) return null;
   return {
@@ -179,7 +179,7 @@ export async function loadMeetingMinutes(ctx: OrgCtx): Promise<MinutesView[]> {
 }
 async function loadMeetingMinutesInner(ctx: OrgCtx): Promise<MinutesView[]> {
   if (!airtableEnabled(ctx)) {
-    const rows = await prisma.platConMeetingMinutes.findMany({
+    const rows = await db(ctx).platConMeetingMinutes.findMany({
       where: { orgId: ctx.orgId },
       orderBy: { meetingDate: "desc" },
       include: { job: { select: { code: true } } },
@@ -238,7 +238,7 @@ export async function loadQuotes(ctx: OrgCtx): Promise<QuoteView[]> {
 }
 async function loadQuotesInner(ctx: OrgCtx): Promise<QuoteView[]> {
   if (!airtableEnabled(ctx)) {
-    const rows = await prisma.platConQuote.findMany({
+    const rows = await db(ctx).platConQuote.findMany({
       where: { orgId: ctx.orgId },
       orderBy: { createdAt: "desc" },
       include: { job: { select: { name: true, code: true } } },
@@ -292,7 +292,7 @@ export async function loadWeeklyReports(ctx: OrgCtx): Promise<ReportView[]> {
 }
 async function loadWeeklyReportsInner(ctx: OrgCtx): Promise<ReportView[]> {
   if (!airtableEnabled(ctx)) {
-    const rows = await prisma.platConWeeklyReport.findMany({
+    const rows = await db(ctx).platConWeeklyReport.findMany({
       where: { orgId: ctx.orgId },
       orderBy: { weekEnding: "desc" },
       include: { job: { select: { code: true } } },

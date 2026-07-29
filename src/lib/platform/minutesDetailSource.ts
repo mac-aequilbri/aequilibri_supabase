@@ -6,7 +6,7 @@
 // in Airtable mode (Airtable JOBS has no code field — see plan P4).
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { type ExtractedAction, parseMinutesModule } from "./minutesDoc";
 import { recordInScope } from "./rls";
 import type { OrgCtx } from "./types";
@@ -46,7 +46,7 @@ function parseActions(raw: unknown): ExtractedAction[] {
 async function fromPostgres(ctx: OrgCtx, id: string): Promise<MinutesDetailView | null> {
   const recId = Number(id);
   if (!Number.isInteger(recId)) return null;
-  const minutes = await prisma.platConMeetingMinutes.findFirst({
+  const minutes = await db(ctx).platConMeetingMinutes.findFirst({
     where: { id: recId, orgId: ctx.orgId },
     include: { job: { select: { code: true } } },
   });

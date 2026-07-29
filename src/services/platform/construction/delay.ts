@@ -4,7 +4,7 @@
 
 import { callClaude } from "@/lib/claude";
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { loadJobContext } from "@/lib/platform/jobContextSource";
 import { modelFor } from "@/lib/platform/modelRouter";
 import { getPrompt } from "@/lib/platform/prompts";
@@ -91,7 +91,7 @@ export async function analyzeDelayCascade(
       Date_Time: new Date().toISOString(),
     }).catch(() => {});
   } else {
-    await prisma.platExecutionLog
+    await db(ctx).platExecutionLog
       .create({
         data: {
           orgId: ctx.orgId,

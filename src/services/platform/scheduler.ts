@@ -12,8 +12,9 @@
 //    PlatCfgSetting "automation.weekly_reports" = true
 
 import { listOrgRegistry } from "@/lib/platform/controlPlane";
-import { prisma } from "@/lib/db";
+import { db } from "@/lib/db";
 import { getOrgCtx } from "@/lib/platform/org-context";
+import type { OrgCtx } from "@/lib/platform/types";
 import { redriveOutbox } from "@/lib/platform/outbox";
 import { generateWeeklyReport } from "./construction/reports";
 import { runHypothesisEngine, snapshotIntelligence } from "./learning";
@@ -29,9 +30,9 @@ export interface SchedulerRunResult {
   errors: string[];
 }
 
-async function wantsAutoReports(orgId: number): Promise<boolean> {
-  const setting = await prisma.platCfgSetting.findFirst({
-    where: { orgId, key: "automation.weekly_reports" },
+async function wantsAutoReports(ctx: OrgCtx): Promise<boolean> {
+  const setting = await db(ctx).platCfgSetting.findFirst({
+    where: { orgId: ctx.orgId, key: "automation.weekly_reports" },
   });
   if (!setting) return false;
   try {
@@ -88,9 +89,13 @@ async function runScheduledTasksInner(now: Date): Promise<SchedulerRunResult> {
     id: o.orgId,
     slug: o.slug,
   }));
+  // Each org's audit row must land in ITS tenant DB (§2b) — keep the resolved
+  // ctxs for the post-loop summary write.
+  const ctxBySlug = new Map<string, OrgCtx>();
   for (const org of orgs) {
     const ctx = await getOrgCtx(org.slug);
     if (!ctx) continue;
+    ctxBySlug.set(org.slug, ctx);
     result.orgs++;
 
     // 1. Correction processing (doc Phase 3 pipeline).
@@ -104,7 +109,7 @@ async function runScheduledTasksInner(now: Date): Promise<SchedulerRunResult> {
 
     // 2. Periodic Intelligence Snapshot.
     try {
-      const latest = await prisma.platIntelligenceSnapshot.findFirst({
+      const latest = await db(ctx).platIntelligenceSnapshot.findFirst({
         where: { orgId: ctx.orgId },
         orderBy: { capturedAt: "desc" },
       });
@@ -121,14 +126,14 @@ async function runScheduledTasksInner(now: Date): Promise<SchedulerRunResult> {
 
     // 3. Weekly report drafts (opt-in; Mondays UTC).
     try {
-      if (now.getUTCDay() === 1 && (await wantsAutoReports(ctx.orgId))) {
+      if (now.getUTCDay() === 1 && (await wantsAutoReports(ctx))) {
         const weekEnding = lastSunday(now);
-        const jobs = await prisma.platJob.findMany({
+        const jobs = await db(ctx).platJob.findMany({
           where: { orgId: ctx.orgId, status: "active" },
           select: { id: true },
         });
         for (const job of jobs) {
-          const existing = await prisma.platConWeeklyReport.findFirst({
+          const existing = await db(ctx).platConWeeklyReport.findFirst({
             where: { orgId: ctx.orgId, jobId: job.id, weekEnding },
           });
           if (existing) continue;
@@ -163,11 +168,13 @@ async function runScheduledTasksInner(now: Date): Promise<SchedulerRunResult> {
     result.hypotheses.created + result.hypotheses.updated > 0 ||
     result.outbox.redriven + result.outbox.deadLettered > 0;
   if (didWork || result.errors.length) {
-    await prisma.platExecutionLog
-      .createMany({
-        data: orgs
-          .filter((org) => result.errors.some((e) => e.startsWith(org.slug)) || didWork)
-          .map((org) => ({
+    for (const org of orgs) {
+      const ctx = ctxBySlug.get(org.slug);
+      if (!ctx) continue;
+      if (!(result.errors.some((e) => e.startsWith(org.slug)) || didWork)) continue;
+      await db(ctx)
+        .platExecutionLog.create({
+          data: {
             orgId: org.id,
             actorType: "system",
             actorName: "scheduler",
@@ -181,9 +188,10 @@ async function runScheduledTasksInner(now: Date): Promise<SchedulerRunResult> {
             status: result.errors.length ? "failed" : "executed",
             executedAt: now,
             error: result.errors.filter((e) => e.startsWith(org.slug)).join("; ").slice(0, 900),
-          })),
-      })
-      .catch(() => {});
+          },
+        })
+        .catch(() => {});
+    }
   }
 
   return result;

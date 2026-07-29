@@ -1,5 +1,5 @@
 import { airtableEnabled, core, type CoreRow } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import type { RecordId } from "@/lib/platform/recordWriter";
 import type { OrgCtx } from "@/lib/platform/types";
 
@@ -49,7 +49,7 @@ export async function loadCapabilityDocuments(
     .map((id) => (typeof id === "number" ? id : Number(id)))
     .filter((id) => Number.isInteger(id));
   if (numeric.length === 0) return [];
-  const rows = await prisma.platDocument.findMany({
+  const rows = await db(ctx).platDocument.findMany({
     where: {
       orgId: ctx.orgId,
       id: { in: numeric },

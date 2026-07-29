@@ -11,7 +11,7 @@
 // fine at quote-line volumes), matching the quotes service's own read path.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { recordInScope } from "./rls";
 import type { OrgCtx } from "./types";
@@ -74,7 +74,7 @@ function linksTo(v: unknown, recordId: string): boolean {
 async function fromPostgres(ctx: OrgCtx, id: string): Promise<QuoteDetailView | null> {
   const quoteId = Number(id);
   if (!Number.isInteger(quoteId)) return null;
-  const quote = await prisma.platConQuote.findFirst({
+  const quote = await db(ctx).platConQuote.findFirst({
     where: { id: quoteId, orgId: ctx.orgId },
     include: {
       job: { select: { name: true, code: true, address: true, suburb: true } },

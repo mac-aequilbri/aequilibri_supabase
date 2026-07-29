@@ -8,7 +8,7 @@
 
 import { airtableEnabled, core } from "@/lib/airtable";
 import { callClaude } from "@/lib/claude";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import {
   buildMinutesAnalysis,
   MINUTES_DOC_TYPE,
@@ -167,7 +167,7 @@ export async function confirmMeetingMinutes(
     return created;
   }
 
-  const minutes = await prisma.platConMeetingMinutes.findFirst({
+  const minutes = await db(ctx).platConMeetingMinutes.findFirst({
     where: { id: Number(id), orgId: ctx.orgId },
   });
   if (!minutes || minutes.status === "confirmed") return 0;

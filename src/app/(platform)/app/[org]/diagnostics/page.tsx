@@ -8,8 +8,9 @@
 import { PageHeader } from "@/components/PageHeader";
 import { Chip } from "@/components/ui/Chip";
 import { airtableEnabled, core, resolveBaseId, type CoreTableName } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { requireAdmin, requireOrgCtx } from "@/lib/platform/org-context";
+import type { OrgCtx } from "@/lib/platform/types";
 import { orgPath } from "@/lib/platform/paths";
 
 export const dynamic = "force-dynamic";
@@ -17,18 +18,18 @@ export const dynamic = "force-dynamic";
 // Each row: a label, the Airtable table, and how to count the Postgres side for
 // this org. Covers the onboard→job→risk→decision→variation flow plus the P2
 // learning tables.
-const ROWS: { label: string; air: CoreTableName; pg: (orgId: number) => Promise<number> }[] = [
-  { label: "Jobs", air: "JOBS", pg: (orgId) => prisma.platJob.count({ where: { orgId } }) },
-  { label: "Risks", air: "RISKS", pg: (orgId) => prisma.platConRisk.count({ where: { orgId } }) },
-  { label: "Decisions", air: "DECISIONS", pg: (orgId) => prisma.platDecision.count({ where: { orgId } }) },
-  { label: "Variations", air: "VARIATIONS", pg: (orgId) => prisma.platConVariationOrder.count({ where: { orgId } }) },
-  { label: "Quotes", air: "QUOTES", pg: (orgId) => prisma.platConQuote.count({ where: { orgId } }) },
-  { label: "Budget lines", air: "BUDGET", pg: (orgId) => prisma.platConBudgetLine.count({ where: { orgId } }) },
-  { label: "Meeting minutes", air: "MEETING_MINUTES", pg: (orgId) => prisma.platConMeetingMinutes.count({ where: { orgId } }) },
-  { label: "Learning rules", air: "LEARNING_RULES", pg: (orgId) => prisma.platLearningRule.count({ where: { orgId } }) },
-  { label: "Corrections", air: "CORRECTIONS", pg: (orgId) => prisma.platCorrection.count({ where: { orgId } }) },
-  { label: "Hypotheses", air: "HYPOTHESES", pg: (orgId) => prisma.platHypothesis.count({ where: { orgId } }) },
-  { label: "Config references", air: "PLAT_CFG_REFERENCE", pg: (orgId) => prisma.platCfgReference.count({ where: { orgId } }) },
+const ROWS: { label: string; air: CoreTableName; pg: (ctx: OrgCtx) => Promise<number> }[] = [
+  { label: "Jobs", air: "JOBS", pg: (ctx) => db(ctx).platJob.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Risks", air: "RISKS", pg: (ctx) => db(ctx).platConRisk.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Decisions", air: "DECISIONS", pg: (ctx) => db(ctx).platDecision.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Variations", air: "VARIATIONS", pg: (ctx) => db(ctx).platConVariationOrder.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Quotes", air: "QUOTES", pg: (ctx) => db(ctx).platConQuote.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Budget lines", air: "BUDGET", pg: (ctx) => db(ctx).platConBudgetLine.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Meeting minutes", air: "MEETING_MINUTES", pg: (ctx) => db(ctx).platConMeetingMinutes.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Learning rules", air: "LEARNING_RULES", pg: (ctx) => db(ctx).platLearningRule.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Corrections", air: "CORRECTIONS", pg: (ctx) => db(ctx).platCorrection.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Hypotheses", air: "HYPOTHESES", pg: (ctx) => db(ctx).platHypothesis.count({ where: { orgId: ctx.orgId } }) },
+  { label: "Config references", air: "PLAT_CFG_REFERENCE", pg: (ctx) => db(ctx).platCfgReference.count({ where: { orgId: ctx.orgId } }) },
 ];
 
 const POSTGRES_BY_DESIGN = [
@@ -69,7 +70,7 @@ export default async function DiagnosticsPage({ params }: { params: Promise<{ or
     ROWS.map(async (r) => ({
       label: r.label,
       air: on ? await airtableCount(ctx.orgSlug, r.air) : "—",
-      pg: await r.pg(ctx.orgId).catch(() => "err"),
+      pg: await r.pg(ctx).catch(() => "err"),
     })),
   );
   const module1 = ctx.config.module1;

@@ -14,7 +14,7 @@
 import { airtableEnabled, core } from "@/lib/airtable";
 import type { CoreRow } from "@/lib/airtable";
 import type { CoreTableName } from "@/lib/airtable/schema.generated";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { normalizeEngagementType } from "./engagementProfile";
 import { computeJobRag } from "./jobRag";
 import { normalizeRag } from "./phasesSource";
@@ -100,7 +100,7 @@ async function listByIds(
 async function fromPostgres(ctx: OrgCtx, id: string): Promise<JobDetailView | null> {
   const jobId = Number(id);
   if (!Number.isInteger(jobId)) return null;
-  const job = await prisma.platJob.findFirst({
+  const job = await db(ctx).platJob.findFirst({
     where: { id: jobId, orgId: ctx.orgId },
     include: {
       conPhases: { where: { isAiDraft: false }, orderBy: { sortOrder: "asc" } },

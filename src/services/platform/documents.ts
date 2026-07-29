@@ -5,7 +5,7 @@
 import { airtableEnabled, core } from "@/lib/airtable";
 import { formulaSafe } from "@/lib/airtable/control";
 import { callClaude } from "@/lib/claude";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { classifyDocument, parseDocumentText } from "@/lib/platform/docs";
 import { getEmailReader } from "@/lib/platform/email";
 import {
@@ -146,7 +146,7 @@ async function resolveJobContext(
     if (airtableEnabled(ctx) || typeof resolution.jobId !== "number") {
       return { jobId: resolution.jobId, jobCode: fallbackTitle, resolution };
     }
-    const job = await prisma.platJob.findFirst({
+    const job = await db(ctx).platJob.findFirst({
       where: { id: resolution.jobId, orgId: ctx.orgId },
       select: { code: true },
     });
@@ -158,14 +158,14 @@ async function resolveJobContext(
     return jobs.length === 1 ? { jobId: jobs[0].id, jobCode: undefined } : {};
   }
   if (typeof jobId === "number") {
-    const job = await prisma.platJob.findFirst({
+    const job = await db(ctx).platJob.findFirst({
       where: { id: jobId, orgId: ctx.orgId },
       select: { code: true },
     });
     return { jobId, jobCode: job?.code || fallbackTitle };
   }
   if (jobId == null) {
-    const jobs = await prisma.platJob.findMany({
+    const jobs = await db(ctx).platJob.findMany({
       where: { orgId: ctx.orgId },
       orderBy: { id: "asc" },
       take: 2,
@@ -231,7 +231,7 @@ async function existingDocuments(ctx: OrgCtx, jobId?: RecordId): Promise<Existin
         aiAnalysis: str(r["AI_Analysis"]) || "{}",
       }));
   }
-  const rows = await prisma.platDocument.findMany({
+  const rows = await db(ctx).platDocument.findMany({
     where: { orgId: ctx.orgId, ...(typeof jobId === "number" ? { jobId } : {}) },
     select: { id: true, title: true, status: true, docType: true, version: true, aiAnalysis: true },
     take: 500,
@@ -719,7 +719,7 @@ async function findByExternalId(ctx: OrgCtx, storageRef: string): Promise<boolea
       .catch(() => [] as unknown[]);
     return recs.length > 0;
   }
-  const existing = await prisma.platDocument.findFirst({
+  const existing = await db(ctx).platDocument.findFirst({
     where: { orgId: ctx.orgId, storageRef },
     select: { id: true },
   });
@@ -873,7 +873,7 @@ export async function analyzeDocument(
 ): Promise<{ ok: boolean; demoMode: boolean; error?: string }> {
   const doc = airtableEnabled(ctx)
     ? await core.get(ctx.orgSlug, "DOCUMENTS", String(id)).catch(() => null)
-    : await prisma.platDocument.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+    : await db(ctx).platDocument.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!doc) return { ok: false, demoMode: false, error: "Document not found" };
   const row = doc as Record<string, unknown>;
   const textContent = String(row.textContent ?? row["Text_Content"] ?? "");
@@ -930,7 +930,7 @@ export async function analyzeDocument(
   });
 
   if (!airtableEnabled(ctx)) {
-    await prisma.platExecutionLog.updateMany({
+    await db(ctx).platExecutionLog.updateMany({
       where: { orgId: ctx.orgId, targetTable: "plat_core_document", targetId: Number(row.id), promptVersion: "" },
       data: { promptVersion: version },
     });

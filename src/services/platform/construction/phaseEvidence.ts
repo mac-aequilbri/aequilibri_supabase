@@ -6,7 +6,7 @@
 
 import { callClaude, callClaudeVisionMulti, VisionImage } from "@/lib/claude";
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { emitCorrection } from "@/lib/platform/corrections";
 import { modelFor } from "@/lib/platform/modelRouter";
 import { getPrompt } from "@/lib/platform/prompts";
@@ -62,7 +62,7 @@ async function getPhase(ctx: OrgCtx, phaseId: RecordId) {
       job: { id: jobId, code: "", name: String(job["Job_Name"] ?? "") },
     };
   }
-  return prisma.platConPhase.findFirst({
+  return db(ctx).platConPhase.findFirst({
     where: { id: Number(phaseId), orgId: ctx.orgId },
     include: { job: { select: { id: true, code: true, name: true } } },
   });
@@ -133,7 +133,7 @@ export async function assessPhaseEvidence(
             }),
         ),
       )
-    : await prisma.platConPhaseEvidence.findMany({
+    : await db(ctx).platConPhaseEvidence.findMany({
         where: { phaseId: Number(phase.id), orgId: ctx.orgId },
         include: { document: true },
         orderBy: { createdAt: "asc" },
@@ -181,7 +181,7 @@ export async function assessPhaseEvidence(
             completionPct: Number(p["Completion_Pct"] ?? 0),
           })),
       )
-    : await prisma.platConPhase.findMany({
+    : await db(ctx).platConPhase.findMany({
         where: { jobId: Number(phase.jobId), orgId: ctx.orgId, isAiDraft: false },
         orderBy: { sortOrder: "asc" },
         select: { name: true, status: true, completionPct: true },
@@ -244,7 +244,7 @@ export async function assessPhaseEvidence(
     requireApproval: false, // annotation only — completionPct is untouched
   });
   if (!airtableEnabled(ctx)) {
-    await prisma.platExecutionLog.updateMany({
+    await db(ctx).platExecutionLog.updateMany({
       where: { orgId: ctx.orgId, targetTable: "plat_con_phase", targetId: Number(phase.id), promptVersion: "" },
       data: { promptVersion: version },
     });

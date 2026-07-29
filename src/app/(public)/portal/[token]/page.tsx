@@ -2,7 +2,7 @@
 // by the token (64-char, unique, expirable, deactivatable); every query below
 // is scoped to the token's org + job, never to a session. No financial data.
 
-import { prisma, prismaUnscoped } from "@/lib/db";
+import { controlDb, db, prismaUnscoped } from "@/lib/db";
 import { formatDate } from "@/lib/format";
 import { BimxViewer } from "@/components/BimxViewer";
 
@@ -46,21 +46,38 @@ export default async function PublicPortalPage({
   if (!token || token.length < 32) return <ExpiredPage />;
 
   // Deliberate cross-org lookup: the token itself is the credential, so this
-  // is the one read that cannot be org-scoped (hence prismaUnscoped).
+  // is the one read that cannot be org-scoped (hence prismaUnscoped). §2b
+  // caveat: this searches the DEFAULT tenant DB only — before any org with
+  // portal tokens is activated onto its own database, token lookup must move
+  // to a control-side index (tracked in docs/migration-progress.md).
   const tokenRecord = await prismaUnscoped.platConPortalToken
     .findFirst({ where: { token } })
     .catch(() => null);
   if (!tokenRecord || !tokenRecord.isActive) return <ExpiredPage />;
   if (tokenRecord.expiresAt && tokenRecord.expiresAt < new Date()) return <ExpiredPage />;
 
+  const { orgId, jobId } = tokenRecord;
+  // Resolve the org's tenant database for the domain reads (public page — no
+  // auth ctx; the registry row supplies the routing config).
+  const reg = await controlDb.platOrganisation.findUnique({ where: { id: orgId } });
+  let tenantDatabaseUrl: string | undefined;
+  try {
+    const parsed = JSON.parse(reg?.settings || "{}") as { tenantDatabaseUrl?: unknown };
+    tenantDatabaseUrl =
+      typeof parsed.tenantDatabaseUrl === "string" && parsed.tenantDatabaseUrl
+        ? parsed.tenantDatabaseUrl
+        : undefined;
+  } catch {
+    /* default DB */
+  }
+  const ctx = { orgId, config: { tenantDatabaseUrl } };
+
   // Best-effort view counter.
-  prisma.platConPortalToken
+  db(ctx).platConPortalToken
     .update({ where: { id: tokenRecord.id }, data: { viewsCount: { increment: 1 } } })
     .catch(() => {});
-
-  const { orgId, jobId } = tokenRecord;
   const [job, phases, actionAgg, riskAgg, bimModels] = await Promise.all([
-    prisma.platJob.findFirst({
+    db(ctx).platJob.findFirst({
       where: { id: jobId, orgId },
       select: {
         name: true,
@@ -70,14 +87,14 @@ export default async function PublicPortalPage({
         clientContact: { select: { name: true } },
       },
     }),
-    prisma.platConPhase.findMany({
+    db(ctx).platConPhase.findMany({
       where: { jobId, orgId, isAiDraft: false },
       orderBy: { sortOrder: "asc" },
       select: { id: true, name: true, status: true, completionPct: true },
     }),
-    prisma.platActionHub.groupBy({ by: ["status"], where: { jobId, orgId }, _count: { id: true } }),
-    prisma.platConRisk.groupBy({ by: ["status"], where: { jobId, orgId }, _count: { id: true } }),
-    prisma.platConBimModel.findMany({
+    db(ctx).platActionHub.groupBy({ by: ["status"], where: { jobId, orgId }, _count: { id: true } }),
+    db(ctx).platConRisk.groupBy({ by: ["status"], where: { jobId, orgId }, _count: { id: true } }),
+    db(ctx).platConBimModel.findMany({
       where: { jobId, orgId, clientVisible: true },
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true, embedUrl: true },

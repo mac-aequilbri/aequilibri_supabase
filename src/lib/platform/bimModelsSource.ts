@@ -1,5 +1,5 @@
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import type { OrgCtx } from "./types";
 
 export interface BimModelView {
@@ -28,12 +28,12 @@ function linksTo(v: unknown, recordId: string): boolean {
 async function fromPostgres(ctx: OrgCtx, id: string): Promise<JobBimModelsView | null> {
   const jobId = Number(id);
   if (!Number.isInteger(jobId)) return null;
-  const job = await prisma.platJob.findFirst({
+  const job = await db(ctx).platJob.findFirst({
     where: { id: jobId, orgId: ctx.orgId },
     select: { id: true, name: true },
   });
   if (!job) return null;
-  const models = await prisma.platConBimModel.findMany({
+  const models = await db(ctx).platConBimModel.findMany({
     where: { jobId, orgId: ctx.orgId },
     orderBy: { createdAt: "desc" },
   });

@@ -4,7 +4,7 @@
 // as decisionsSource.ts.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import {
   ACTION_STATUSES,
   resolveActionStatus,
@@ -196,17 +196,17 @@ async function fromPostgres(ctx: OrgCtx, query?: ListQuery): Promise<ActionsData
     ...(query ? toPrismaWhere(query, actionsListConfig) : {}),
   };
   const [items, total, open, overdue, fromChat] = await Promise.all([
-    prisma.platActionHub.findMany({
+    db(ctx).platActionHub.findMany({
       where,
       orderBy: [{ status: "asc" }, { dueDate: "asc" }],
       take: 2000, // must exceed any real register size — pagination slices in-memory after this
       include: { job: { select: { code: true } } },
     }),
-    prisma.platActionHub.count({ where: { orgId: ctx.orgId, ...jobW } }),
-    prisma.platActionHub.count({
+    db(ctx).platActionHub.count({ where: { orgId: ctx.orgId, ...jobW } }),
+    db(ctx).platActionHub.count({
       where: { orgId: ctx.orgId, ...jobW, status: { in: ["open", "in_progress"] } },
     }),
-    prisma.platActionHub.count({
+    db(ctx).platActionHub.count({
       where: {
         orgId: ctx.orgId,
         ...jobW,
@@ -214,7 +214,7 @@ async function fromPostgres(ctx: OrgCtx, query?: ListQuery): Promise<ActionsData
         dueDate: { lt: new Date() },
       },
     }),
-    prisma.platActionHub.count({ where: { orgId: ctx.orgId, ...jobW, sourceType: "chat" } }),
+    db(ctx).platActionHub.count({ where: { orgId: ctx.orgId, ...jobW, sourceType: "chat" } }),
   ]);
   return {
     items: items.map((a) => ({
@@ -336,7 +336,7 @@ export async function loadAction(ctx: OrgCtx, id: string): Promise<ActionDetail 
       jobId: firstLink(r["Job"]),
     };
   }
-  const a = await prisma.platActionHub.findFirst({
+  const a = await db(ctx).platActionHub.findFirst({
     where: { id: Number(id), orgId: ctx.orgId },
     include: { job: { select: { code: true } } },
   });

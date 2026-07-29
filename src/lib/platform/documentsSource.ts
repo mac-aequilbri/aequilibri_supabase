@@ -1,5 +1,5 @@
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { loadJobLabelMap } from "./jobOptionsSource";
 import { recordInScope, scopeByJob } from "./rls";
 import type { OrgCtx } from "./types";
@@ -99,7 +99,7 @@ function module2Meta(row: { title: string; aiAnalysis: string; version?: number 
 }
 
 async function fromPostgresList(ctx: OrgCtx): Promise<DocumentView[]> {
-  const docs = await prisma.platDocument.findMany({
+  const docs = await db(ctx).platDocument.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { createdAt: "desc" },
     take: 2000,
@@ -160,7 +160,7 @@ async function fromAirtableList(ctx: OrgCtx): Promise<DocumentView[]> {
 async function fromPostgresDetail(ctx: OrgCtx, id: string): Promise<DocumentDetailView | null> {
   const docId = Number(id);
   if (!Number.isInteger(docId)) return null;
-  const doc = await prisma.platDocument.findFirst({
+  const doc = await db(ctx).platDocument.findFirst({
     where: { id: docId, orgId: ctx.orgId },
     include: { job: { select: { code: true, name: true } } },
   });

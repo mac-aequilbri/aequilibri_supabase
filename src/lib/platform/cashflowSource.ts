@@ -8,7 +8,7 @@
 // no longer read anywhere — kept only as pre-ledger historical data.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { comparePeriods, toNum } from "@/lib/format";
 import { recordInScope, scopeByJob } from "./rls";
 import type { EditorValues } from "./recordEditor";
@@ -46,7 +46,7 @@ function asType(v: unknown): CashflowType {
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<JobCashflow[]> {
-  const jobs = await prisma.platJob.findMany({
+  const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { code: "asc" },
     include: { conCashflowLedger: { orderBy: { period: "asc" } } },
@@ -134,7 +134,7 @@ export async function loadCashflowDetail(ctx: OrgCtx, id: string): Promise<Edito
   }
   const numId = Number(id);
   if (!Number.isInteger(numId)) return null;
-  const c = await prisma.platConCashflowLedger.findFirst({
+  const c = await db(ctx).platConCashflowLedger.findFirst({
     where: { id: numId, orgId: ctx.orgId },
   });
   if (!c) return null;

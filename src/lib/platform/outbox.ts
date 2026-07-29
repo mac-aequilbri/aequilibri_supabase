@@ -19,7 +19,7 @@ import {
   listFailedOutbox,
   setOutboxStatus,
 } from "@/lib/platform/controlPlane";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { logger, errMeta } from "@/lib/logger";
 import type { OrgCtx } from "./types";
 import type { RecordId } from "./recordWriter";
@@ -113,7 +113,7 @@ export async function logIntegrationAudit(
         Date_Time: new Date().toISOString(),
       });
     } else {
-      await prisma.platExecutionLog.create({
+      await db(ctx).platExecutionLog.create({
         data: {
           orgId: ctx.orgId,
           actorType: "system",

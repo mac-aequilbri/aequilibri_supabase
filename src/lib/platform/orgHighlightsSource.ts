@@ -14,7 +14,7 @@
 // count 0, not fail the whole batch.
 
 import { airtableEnabled, core } from "@/lib/airtable";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import { resolveActionStatus } from "./actionStatus";
 import { loadActionStatusMap } from "./configSource";
 import { listOptional } from "./optionalList";
@@ -94,17 +94,17 @@ async function fromPostgres(ctx: OrgCtx, scope?: JobScope): Promise<OrgHighlight
   const ownW = ids ? { id: { in: ids } } : scope && scope.mode === "none" ? { id: -1 } : {};
   const [projects, openActions, overdueActions, pendingApprovals, openRisks, openVariations] =
     await Promise.all([
-      prisma.platJob.count({ where: { orgId: ctx.orgId, ...ownW } }),
-      prisma.platActionHub.count({ where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, ...jobW } }),
-      prisma.platActionHub.count({
+      db(ctx).platJob.count({ where: { orgId: ctx.orgId, ...ownW } }),
+      db(ctx).platActionHub.count({ where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, ...jobW } }),
+      db(ctx).platActionHub.count({
         where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, dueDate: { lt: new Date() }, ...jobW },
       }),
-      prisma.platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed", ...jobW } }),
+      db(ctx).platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed", ...jobW } }),
       f.risks
-        ? prisma.platConRisk.count({ where: { orgId: ctx.orgId, status: "open", ...jobW } })
+        ? db(ctx).platConRisk.count({ where: { orgId: ctx.orgId, status: "open", ...jobW } })
         : Promise.resolve(0),
       f.variations
-        ? prisma.platConVariationOrder.count({ where: { orgId: ctx.orgId, status: "submitted", ...jobW } })
+        ? db(ctx).platConVariationOrder.count({ where: { orgId: ctx.orgId, status: "submitted", ...jobW } })
         : Promise.resolve(0),
     ]);
   return { projects, openActions, overdueActions, pendingApprovals, openRisks, openVariations };

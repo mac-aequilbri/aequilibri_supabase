@@ -16,7 +16,7 @@
 
 import { airtableEnabled, core } from "@/lib/airtable";
 import { airtableMapFor, toFields } from "@/lib/airtable/fieldMaps";
-import { prisma } from "@/lib/db";
+import { db, prisma } from "@/lib/db";
 import type { RecordId } from "@/lib/platform/recordWriter";
 import { OrgCtx } from "@/lib/platform/types";
 
@@ -168,7 +168,7 @@ async function settingsByKey(ctx: OrgCtx): Promise<Map<string, string>> {
     }
     return m;
   }
-  const rows = await prisma.platCfgSetting.findMany({
+  const rows = await db(ctx).platCfgSetting.findMany({
     where: { orgId: ctx.orgId, key: { in: Object.values(SETTING_KEYS) } },
   });
   return new Map(rows.map((r) => [r.key, r.value]));
@@ -543,7 +543,7 @@ export async function runHypothesisEngine(
 ): Promise<{ created: number; updated: number }> {
   const settings = await getLearningSettings(ctx);
   if (airtableEnabled(ctx)) return runHypothesisEngineAirtable(ctx, settings);
-  const rows = await prisma.platCorrection.findMany({
+  const rows = await db(ctx).platCorrection.findMany({
     where: { orgId: ctx.orgId, hypothesisId: null, rootCause: { not: "" } },
   });
   const corrections: (LoopCorrection & { pgId: number })[] = rows.map((c) => {
@@ -580,7 +580,7 @@ export async function runHypothesisEngine(
     // Postgres has no meta column for the cluster key; prior matching stays on
     // (dominant dimension + root cause), which the key subsumes for rows
     // without a supplier/phase anchor.
-    const existing = await prisma.platHypothesis.findFirst({
+    const existing = await db(ctx).platHypothesis.findFirst({
       where: {
         orgId: ctx.orgId,
         dimension: stats.dimension,
@@ -592,7 +592,7 @@ export async function runHypothesisEngine(
     let hypothesisId: number;
     if (existing) {
       const sampleCount = group.length + existing.sampleCount;
-      const h = await prisma.platHypothesis.update({
+      const h = await db(ctx).platHypothesis.update({
         where: { id: existing.id },
         data: {
           description,
@@ -606,7 +606,7 @@ export async function runHypothesisEngine(
       hypothesisId = h.id;
       updated++;
     } else {
-      const h = await prisma.platHypothesis.create({
+      const h = await db(ctx).platHypothesis.create({
         data: {
           orgId: ctx.orgId,
           description,
@@ -622,7 +622,7 @@ export async function runHypothesisEngine(
       hypothesisId = h.id;
       created++;
     }
-    await prisma.platCorrection.updateMany({
+    await db(ctx).platCorrection.updateMany({
       where: { orgId: ctx.orgId, id: { in: group.map((c) => c.pgId) } },
       data: { hypothesisId },
     });
@@ -644,7 +644,7 @@ export async function setHypothesisStatus(
     });
     return;
   }
-  await prisma.platHypothesis.updateMany({
+  await db(ctx).platHypothesis.updateMany({
     where: { id: Number(id), orgId: ctx.orgId },
     data: { status, reviewedAt: new Date() },
   });
@@ -661,7 +661,7 @@ export async function nextRuleCode(ctx: OrgCtx, bump = 0): Promise<string> {
     const rows = await core.list(ctx.orgSlug, "LEARNING_RULES", { maxRecords: 500 });
     max = rows.reduce((m, r) => Math.max(m, Number(S(r["Instance"]).replace(/\D/g, "")) || 0), 0);
   } else {
-    const rules = await prisma.platLearningRule.findMany({
+    const rules = await db(ctx).platLearningRule.findMany({
       where: { orgId: ctx.orgId },
       select: { ruleCode: true },
     });
@@ -674,6 +674,8 @@ export async function nextRuleCode(ctx: OrgCtx, bump = 0): Promise<string> {
  *  with the Airtable field map, plus Airtable-only keys the Postgres path
  *  strips: the source-hypothesis record link and the issue date). */
 type RuleCreateData = Omit<
+  // Type-level only — the shared client's delegate types are identical to any
+  // per-org client's (same schema), so `prisma` is fine here.
   Parameters<typeof prisma.platLearningRule.create>[0]["data"],
   "ruleCode" | "orgId"
 > & { sourceHypothesisAirId?: string; dateIssued?: Date };
@@ -702,7 +704,7 @@ export async function createRuleWithCode(
     const ruleCode = await nextRuleCode(ctx, attempt);
     try {
       /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-      const rule = await prisma.platLearningRule.create({ data: { ...(pgData as any), orgId: ctx.orgId, ruleCode } });
+      const rule = await db(ctx).platLearningRule.create({ data: { ...(pgData as any), orgId: ctx.orgId, ruleCode } });
       return { id: String(rule.id), ruleCode };
     } catch (err) {
       const code = (err as { code?: string }).code;
@@ -796,7 +798,7 @@ export async function promoteHypothesisToRule(
     return rule.id;
   }
 
-  const h = await prisma.platHypothesis.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const h = await db(ctx).platHypothesis.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!h) return null;
 
   const type = deriveHypothesisType(h.rootCausePattern, h.triggerCondition);
@@ -809,7 +811,7 @@ export async function promoteHypothesisToRule(
 
   let adjustment = "{}";
   if (effectiveKind === "adjustment") {
-    const corrections = await prisma.platCorrection.findMany({
+    const corrections = await db(ctx).platCorrection.findMany({
       where: { orgId: ctx.orgId, hypothesisId: h.id, variancePct: { not: null } },
       select: { variancePct: true },
     });
@@ -836,7 +838,7 @@ export async function promoteHypothesisToRule(
     autoApply: false,
     sourceHypothesisId: h.id,
   });
-  await prisma.platHypothesis.update({ where: { id: h.id }, data: { status: "promoted" } });
+  await db(ctx).platHypothesis.update({ where: { id: h.id }, data: { status: "promoted" } });
   return rule.id;
 }
 
@@ -919,7 +921,7 @@ export async function getActiveRules(ctx: OrgCtx): Promise<RuleRow[]> {
       .filter((r) => r.isActive)
       .sort((a, b) => b.priority - a.priority || b.confidence - a.confidence);
   }
-  const rows = await prisma.platLearningRule.findMany({
+  const rows = await db(ctx).platLearningRule.findMany({
     where: { orgId: ctx.orgId, isActive: true },
     orderBy: [{ priority: "desc" }, { confidence: "desc" }],
   });
@@ -1011,7 +1013,7 @@ export async function applyRules(
       // unmigrated base must not fail the firing above).
       await writeRuleLadder(ctx, r.id, ladderAfterEvent(r.overrideLevel, r.applicationWindow, true));
     } else {
-      await prisma.platLearningRule.update({
+      await db(ctx).platLearningRule.update({
         where: { id: Number(r.id) },
         data: {
           timesTriggered: { increment: 1 },
@@ -1054,13 +1056,13 @@ export async function recordRuleOverride(
     );
     return { confidence, underReview };
   }
-  const rule = await prisma.platLearningRule.findFirst({
+  const rule = await db(ctx).platLearningRule.findFirst({
     where: { orgId: ctx.orgId, ruleCode },
   });
   if (!rule) return null;
   const confidence = Math.max(0, rule.confidence - RULE_OVERRIDE_DECAY);
   const underReview = confidence <= RULE_UNDER_REVIEW_AT;
-  await prisma.platLearningRule.update({
+  await db(ctx).platLearningRule.update({
     where: { id: rule.id },
     data: {
       confidence,
@@ -1082,7 +1084,7 @@ async function writeRuleLadder(
     if (!airtableEnabled(ctx)) {
       const id = Number(ruleId);
       if (!Number.isInteger(id)) return;
-      await prisma.platLearningRule.update({
+      await db(ctx).platLearningRule.update({
         where: { id },
         data: {
           applicationWindow: serializeApplicationWindow(state.window),
@@ -1112,7 +1114,7 @@ export async function setRuleOverrideLevel(
     if (!airtableEnabled(ctx)) {
       const id = Number(ruleId);
       if (!Number.isInteger(id)) return;
-      await prisma.platLearningRule.update({ where: { id }, data: { overrideLevel: level } });
+      await db(ctx).platLearningRule.update({ where: { id }, data: { overrideLevel: level } });
       return;
     }
     await core.update(ctx.orgSlug, "LEARNING_RULES", ruleId, {
@@ -1132,7 +1134,7 @@ export async function markRuleApplied(ctx: OrgCtx, rule: RuleRow): Promise<void>
   if (!airtableEnabled(ctx)) {
     const id = Number(rule.id);
     if (!Number.isInteger(id)) return;
-    await prisma.platLearningRule.update({
+    await db(ctx).platLearningRule.update({
       where: { id },
       data: {
         timesTriggered: rule.timesTriggered + 1,
@@ -1193,7 +1195,7 @@ async function snapshotCorrections(ctx: OrgCtx): Promise<{ variancePct: number |
       }))
       .filter((c) => c.variancePct != null);
   }
-  return prisma.platCorrection.findMany({
+  return db(ctx).platCorrection.findMany({
     where: { orgId: ctx.orgId, variancePct: { not: null } },
     select: { variancePct: true },
   });
@@ -1205,7 +1207,7 @@ async function snapshotPendingHyp(ctx: OrgCtx): Promise<number> {
     const rows = await core.list(ctx.orgSlug, "HYPOTHESES", { maxRecords: 500 });
     return rows.filter((r) => (S(r["Status"]) || "pending") === "pending").length;
   }
-  return prisma.platHypothesis.count({ where: { orgId: ctx.orgId, status: "pending" } });
+  return db(ctx).platHypothesis.count({ where: { orgId: ctx.orgId, status: "pending" } });
 }
 
 /** Total + completed job counts from the active backend. */
@@ -1216,8 +1218,8 @@ async function snapshotJobCounts(ctx: OrgCtx): Promise<{ total: number; complete
     return { total: jobs.length, completed: jobs.filter((j) => done.has(S(j["Status"]))).length };
   }
   const [total, completed] = await Promise.all([
-    prisma.platJob.count({ where: { orgId: ctx.orgId } }),
-    prisma.platJob.count({ where: { orgId: ctx.orgId, status: { in: ["completed", "archived"] } } }),
+    db(ctx).platJob.count({ where: { orgId: ctx.orgId } }),
+    db(ctx).platJob.count({ where: { orgId: ctx.orgId, status: { in: ["completed", "archived"] } } }),
   ]);
   return { total, completed };
 }
@@ -1235,7 +1237,7 @@ async function snapshotPrevAvg(ctx: OrgCtx): Promise<number | null> {
       return null;
     }
   }
-  const prev = await prisma.platIntelligenceSnapshot.findFirst({
+  const prev = await db(ctx).platIntelligenceSnapshot.findFirst({
     where: { orgId: ctx.orgId },
     orderBy: { capturedAt: "desc" },
   });
@@ -1311,7 +1313,7 @@ export async function snapshotIntelligence(ctx: OrgCtx): Promise<number> {
     return 0; // Airtable has no numeric snapshot id
   }
 
-  const snap = await prisma.platIntelligenceSnapshot.create({
+  const snap = await db(ctx).platIntelligenceSnapshot.create({
     data: {
       orgId: ctx.orgId,
       totalJobs,
