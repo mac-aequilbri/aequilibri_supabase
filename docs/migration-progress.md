@@ -270,11 +270,46 @@ PlatCtlAssignment, fail-open→scoped→cleared).
   seeding idempotency, D upsert+re-fire, G create-once, F RAG floor,
   advisory lifecycle, bookkeeping. Suite: 39 files / 301 tests green.
 
-### Stage B2 — remaining Phase 3 work
-**§2b physical split**: control Prisma schema + separate control DB,
-`db(ctx)` tenant resolver, native RLS in tenant DBs, migrate fan-out
-script, composite `(orgId, airtableRecordId)` fix across the 37 bridged
-models.
+### Stage B2 — §2b rule 5: composite bridge uniqueness (2026-07-29) — DONE
+39 tenant models converted from `airtableRecordId @unique` (global) to
+`@@unique([orgId, airtableRecordId])` via a schema transform; the 9
+control-side models (PlatOrganisation + PlatCtl*) keep the global unique
+(their rec-ids come from the single control base). Migration
+`20260729210000_composite_bridge_uniqueness` (39 DROP + 39 CREATE UNIQUE
+INDEX). No `src/` code queried by that key (verified); the movers'
+org-scoped recMaps are compatible unchanged. No drift; 301/301 green.
+
+### Stage B3 — remaining §2b physical split (designed, not yet built)
+Execution order chosen so every step keeps the app green:
+
+1. **Split the Prisma schemas.** `prisma/schema.prisma` stays the TENANT
+   schema (drop PlatOrganisation's tenant-side relations: tenant models keep
+   bare `orgId Int` — no FK to the org — per no-cross-DB-FK; PlatOrganisation
+   + PlatCtl* move out). New `prisma/control/schema.prisma` (PlatOrganisation
+   + PlatCtl*, own migration history, generated client output
+   `node_modules/@prisma/control-client` via generator `output`).
+   `CONTROL_DATABASE_URL` env (falls back to DATABASE_URL in dev so a single
+   local cluster still works).
+2. **db.ts becomes the two-client seam** (§2b rules 1–2): `controlDb`
+   (control client singleton) + `db(ctx)` (org → cached tenant client from
+   the registry's connection string; LRU-bounded, §2b rule 8). During the
+   transition `db(ctx)` returns the legacy shared client when the org has no
+   `tenantDatabaseUrl` in its registry settings — so the split can roll out
+   org-by-org (create DB → fan-out migrate → mover copy → flip the setting).
+3. **Call-site migration**: `prisma.plat*` → `db(ctx).plat*` on the Phase D
+   ctx threading (~150 sites); `controlPlane.ts` + org-context switch to
+   `controlDb`. The org-guard extension moves onto the tenant client
+   unchanged (rule 3 tripwire).
+4. **Provisioning**: onboarding's PG path gains CREATE DATABASE + migrate +
+   seed (replaces "clone template base"); `scripts/migrate-all-tenants.mjs`
+   = the §2b rule 6 fan-out (control DB first, then every tenant from the
+   registry, fail-fast).
+5. **Native RLS** (§2b rule 4): per-tenant-DB policies on orgId once tenant
+   DBs are single-org (policy: `USING (org_id = current_setting('app.org_id')::int)`,
+   set per connection by db(ctx)).
+6. **Uc1\*/legacy tables**: stay in the control/default DB (operator-internal
+   roofing demo, not client data — putting them per-tenant would duplicate
+   them). Confirm with owner before cutover.
 
 ### Notes / gotchas
 - `templates/actions.ts` is UTF-16-encoded on disk (grep sees it as binary) —

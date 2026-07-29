@@ -841,7 +841,7 @@ model PlatPendingWrite {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int?      @map("job_id")
   tableKey         String    @map("table_key") @db.VarChar(50)
@@ -862,6 +862,8 @@ model PlatPendingWrite {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_pendingwrite")
 }
 
@@ -871,7 +873,7 @@ model PlatAssessment {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   name             String   @db.VarChar(300)
   engagementType   String   @default("long_project") @map("engagement_type") @db.VarChar(30)
@@ -889,6 +891,8 @@ model PlatAssessment {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_assessment")
 }
 
@@ -896,7 +900,7 @@ model PlatContact {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   name             String   @db.VarChar(200)
   type             String   @default("client") @map("contact_type") @db.VarChar(30)
@@ -912,6 +916,8 @@ model PlatContact {
   jobs PlatJob[]
 
   @@index([orgId, isActive])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_contact")
 }
 
@@ -919,7 +925,7 @@ model PlatJob {
   id                Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId  String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId  String? @map("airtable_record_id") @db.VarChar(20)
   orgId             Int       @map("org_id")
   code              String    @db.VarChar(50)
   name              String    @db.VarChar(300)
@@ -969,6 +975,8 @@ model PlatJob {
 
   @@unique([orgId, code])
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_job")
 }
 
@@ -976,7 +984,7 @@ model PlatWorkstream {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   jobId            Int?     @map("job_id")
   name             String   @db.VarChar(200)
@@ -992,6 +1000,8 @@ model PlatWorkstream {
   actions PlatActionHub[]
 
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_workstream")
 }
 
@@ -999,7 +1009,7 @@ model PlatActionHub {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int?      @map("job_id")
   workstreamId     Int?      @map("workstream_id")
@@ -1027,6 +1037,8 @@ model PlatActionHub {
   workstream PlatWorkstream?  @relation(fields: [workstreamId], references: [id], onDelete: SetNull)
 
   @@index([orgId, status, dueDate])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_actionhub")
 }
 
@@ -1034,7 +1046,7 @@ model PlatDecision {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int?      @map("job_id")
   description      String
@@ -1052,6 +1064,8 @@ model PlatDecision {
   job PlatJob?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_decision")
 }
 
@@ -1059,7 +1073,7 @@ model PlatLearningRule {
   id                 Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId   String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId   String? @map("airtable_record_id") @db.VarChar(20)
   orgId              Int       @map("org_id")
   ruleCode           String    @map("rule_code") @db.VarChar(20)
   kind               String    @default("guidance") @db.VarChar(20)
@@ -1088,6 +1102,8 @@ model PlatLearningRule {
 
   @@unique([orgId, ruleCode])
   @@index([orgId, isActive])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_learningrule")
 }
 
@@ -1095,7 +1111,7 @@ model PlatHypothesis {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   description      String
   dimension        String    @default("") @db.VarChar(100)
@@ -1115,6 +1131,8 @@ model PlatHypothesis {
   corrections   PlatCorrection[]
 
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_hypothesis")
 }
 
@@ -1122,7 +1140,7 @@ model PlatCorrection {
   id                  Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId    String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId    String? @map("airtable_record_id") @db.VarChar(20)
   orgId               Int      @map("org_id")
   jobId               Int?     @map("job_id")
   entityType          String   @default("") @map("entity_type") @db.VarChar(50)
@@ -1149,6 +1167,8 @@ model PlatCorrection {
   rule       PlatLearningRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
 
   @@index([orgId, dimension, createdAt])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_correction")
 }
 
@@ -1156,7 +1176,7 @@ model PlatExecutionLog {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int?      @map("job_id")
   actorType        String    @default("system") @map("actor_type") @db.VarChar(20)
@@ -1178,6 +1198,8 @@ model PlatExecutionLog {
   job PlatJob?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([orgId, status, createdAt])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_executionlog")
 }
 
@@ -1185,7 +1207,7 @@ model PlatDocument {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int?      @map("job_id")
   title            String    @db.VarChar(300)
@@ -1214,6 +1236,8 @@ model PlatDocument {
   phaseEvidence  PlatConPhaseEvidence[]
 
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_document")
 }
 
@@ -1221,7 +1245,7 @@ model PlatIntelligenceSnapshot {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   capturedAt       DateTime @default(now()) @map("captured_at")
   totalJobs        Int      @default(0) @map("total_jobs")
@@ -1238,6 +1262,8 @@ model PlatIntelligenceSnapshot {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, capturedAt])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_intelligencesnapshot")
 }
 
@@ -1245,7 +1271,7 @@ model PlatChatSession {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int?      @map("job_id")
   title            String    @default("") @db.VarChar(300)
@@ -1258,6 +1284,8 @@ model PlatChatSession {
   messages PlatChatMessage[]
 
   @@index([orgId, startedAt])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_chatsession")
 }
 
@@ -1265,7 +1293,7 @@ model PlatChatMessage {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   sessionId        Int      @map("session_id")
   role             String   @db.VarChar(20)
@@ -1277,6 +1305,8 @@ model PlatChatMessage {
   session PlatChatSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, createdAt])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_chatmessage")
 }
 
@@ -1286,7 +1316,7 @@ model PlatConPhase {
   id                 Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId   String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId   String? @map("airtable_record_id") @db.VarChar(20)
   orgId              Int       @map("org_id")
   jobId              Int       @map("job_id")
   name               String    @db.VarChar(200)
@@ -1311,6 +1341,8 @@ model PlatConPhase {
   evidence    PlatConPhaseEvidence[]
 
   @@index([jobId, sortOrder])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_phase")
 }
 
@@ -1320,7 +1352,7 @@ model PlatConPhaseEvidence {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   jobId            Int      @map("job_id")
   phaseId          Int      @map("phase_id")
@@ -1336,6 +1368,8 @@ model PlatConPhaseEvidence {
 
   @@unique([phaseId, documentId])
   @@index([jobId])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_phaseevidence")
 }
 
@@ -1343,7 +1377,7 @@ model PlatConBudgetLine {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   jobId            Int      @map("job_id")
   phaseId          Int?     @map("phase_id")
@@ -1360,6 +1394,8 @@ model PlatConBudgetLine {
   phase PlatConPhase?    @relation(fields: [phaseId], references: [id], onDelete: SetNull)
 
   @@index([jobId, category])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_budgetline")
 }
 
@@ -1367,7 +1403,7 @@ model PlatConCashflow {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   jobId            Int      @map("job_id")
   period           String   @db.VarChar(7)
@@ -1380,6 +1416,8 @@ model PlatConCashflow {
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, period])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_cashflow")
 }
 
@@ -1420,7 +1458,7 @@ model PlatConRisk {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int       @map("job_id")
   description      String
@@ -1438,6 +1476,8 @@ model PlatConRisk {
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_risk")
 }
 
@@ -1445,7 +1485,7 @@ model PlatConVariationOrder {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int       @map("job_id")
   refNumber        String    @default("") @map("ref_number") @db.VarChar(30)
@@ -1466,6 +1506,8 @@ model PlatConVariationOrder {
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_variationorder")
 }
 
@@ -1475,7 +1517,7 @@ model PlatConQuote {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   // Optional: a proposal (UC1-style assessment → proposal → accept) exists
   // before any project does. jobId is backfilled when the proposal is accepted
@@ -1505,6 +1547,8 @@ model PlatConQuote {
 
   @@index([jobId, status])
   @@index([orgId, assessmentId])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_quote")
 }
 
@@ -1512,7 +1556,7 @@ model PlatConQuoteLine {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   quoteId          Int      @map("quote_id")
   description      String   @db.VarChar(300)
@@ -1528,6 +1572,8 @@ model PlatConQuoteLine {
   quote PlatConQuote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
 
   @@index([quoteId, sortOrder])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_quoteline")
 }
 
@@ -1535,7 +1581,7 @@ model PlatConVendor {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   name             String   @db.VarChar(200)
   category         String   @default("") @db.VarChar(100)
@@ -1551,6 +1597,8 @@ model PlatConVendor {
   procurements PlatConProcurement[]
 
   @@index([orgId, isActive])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_vendor")
 }
 
@@ -1558,7 +1606,7 @@ model PlatConProcurement {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int       @map("job_id")
   item             String    @db.VarChar(300)
@@ -1577,6 +1625,8 @@ model PlatConProcurement {
   vendor PlatConVendor?   @relation(fields: [vendorId], references: [id], onDelete: SetNull)
 
   @@index([jobId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_procurement")
 }
 
@@ -1584,7 +1634,7 @@ model PlatConRoomMatrix {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   jobId            Int      @map("job_id")
   zone             String   @default("") @db.VarChar(100)
@@ -1599,6 +1649,8 @@ model PlatConRoomMatrix {
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, zone])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_roommatrix")
 }
 
@@ -1606,7 +1658,7 @@ model PlatConMeetingMinutes {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int       @map("job_id")
   meetingDate      DateTime  @map("meeting_date") @db.Date
@@ -1623,6 +1675,8 @@ model PlatConMeetingMinutes {
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_meetingminutes")
 }
 
@@ -1630,7 +1684,7 @@ model PlatConWeeklyReport {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int       @map("job_id")
   weekEnding       DateTime  @map("week_ending") @db.Date
@@ -1648,6 +1702,8 @@ model PlatConWeeklyReport {
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, weekEnding])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_weeklyreport")
 }
 
@@ -1655,7 +1711,7 @@ model PlatConBimModel {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   jobId            Int      @map("job_id")
   name             String   @db.VarChar(200)
@@ -1670,6 +1726,8 @@ model PlatConBimModel {
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_bimmodel")
 }
 
@@ -1677,7 +1735,7 @@ model PlatConPortalToken {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int       @map("job_id")
   token            String    @unique @db.VarChar(64)
@@ -1691,6 +1749,8 @@ model PlatConPortalToken {
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, isActive])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_portaltoken")
 }
 
@@ -1698,7 +1758,7 @@ model PlatConAccountingConnection {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   provider         String    @default("demo") @db.VarChar(20)
   status           String    @default("disconnected") @db.VarChar(30)
@@ -1712,6 +1772,8 @@ model PlatConAccountingConnection {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_accountingconnection")
 }
 
@@ -1721,7 +1783,7 @@ model PlatCfgTeamMember {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   name             String   @db.VarChar(200)
   role             String   @default("editor") @db.VarChar(30)
@@ -1732,6 +1794,8 @@ model PlatCfgTeamMember {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, isActive])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_cfg_teammember")
 }
 
@@ -1739,7 +1803,7 @@ model PlatCfgRegion {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   name             String   @db.VarChar(200)
   postcodes        String   @default("") @db.VarChar(500)
@@ -1751,6 +1815,8 @@ model PlatCfgRegion {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, isActive])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_cfg_region")
 }
 
@@ -1758,7 +1824,7 @@ model PlatCfgReference {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   type             String   @map("ref_type") @db.VarChar(50)
   code             String   @db.VarChar(100)
@@ -1771,6 +1837,8 @@ model PlatCfgReference {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, type, code])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_cfg_reference")
 }
 
@@ -1778,7 +1846,7 @@ model PlatCfgNomenclature {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   customerTerm     String   @map("customer_term") @db.VarChar(200)
   standardTerm     String   @map("standard_term") @db.VarChar(200)
@@ -1787,6 +1855,8 @@ model PlatCfgNomenclature {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, customerTerm])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_cfg_nomenclature")
 }
 
@@ -1794,7 +1864,7 @@ model PlatCfgSetting {
   id               Int      @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
   // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   key              String   @map("setting_key") @db.VarChar(100)
   value            String   @default("{}")
@@ -1803,6 +1873,8 @@ model PlatCfgSetting {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, key])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_cfg_setting")
 }
 
@@ -1820,7 +1892,7 @@ model PlatCfgSetting {
 // gives recordWriter's `comms` entry a Postgres delegate target.
 model PlatComms {
   id               Int       @id @default(autoincrement())
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int?      @map("job_id")
   topic            String    @db.VarChar(300)
@@ -1839,13 +1911,15 @@ model PlatComms {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_comms")
 }
 
 // PLAN (Spec 12 Core) — Module 5 task-level schedule. Was Airtable-only.
 model PlatConPlanTask {
   id               Int       @id @default(autoincrement())
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int       @map("org_id")
   jobId            Int?      @map("job_id")
   name             String    @map("task_name") @db.VarChar(300)
@@ -1864,6 +1938,8 @@ model PlatConPlanTask {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, status])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_con_plantask")
 }
 
@@ -1871,7 +1947,7 @@ model PlatConPlanTask {
 // written by onboarding. `tier` mirrors the Airtable `_TIER` column.
 model PlatEngagementTypeConfig {
   id               Int      @id @default(autoincrement())
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  airtableRecordId String? @map("airtable_record_id") @db.VarChar(20)
   orgId            Int      @map("org_id")
   configName       String   @default("") @map("config_name") @db.VarChar(200)
   engagementType   String   @map("engagement_type") @db.VarChar(30)
@@ -1888,6 +1964,8 @@ model PlatEngagementTypeConfig {
   org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, engagementType])
+  @@unique([orgId, airtableRecordId])
+
   @@map("plat_core_engagementtypeconfig")
 }
 
