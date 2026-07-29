@@ -17,7 +17,7 @@ import {
   readMetricsSnapshot,
   saveMetricsSnapshot,
   type OrgMetricsSnapshot,
-} from "@/lib/airtable/control";
+} from "@/lib/platform/controlPlane";
 import { prisma } from "@/lib/db";
 import { logger, errMeta } from "@/lib/logger";
 import { loadOrgHighlights } from "./orgHighlightsSource";

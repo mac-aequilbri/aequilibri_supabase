@@ -2,8 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { controlEnabled, setOrgAiAuthority } from "@/lib/airtable/control";
-import { prisma } from "@/lib/db";
+import { setOrgAiAuthority } from "@/lib/platform/controlPlane";
 import { requireAdmin, requireOrgCtx } from "@/lib/platform/org-context";
 import { orgPath } from "@/lib/platform/paths";
 
@@ -19,11 +18,7 @@ export async function setAiAuthorityAction(formData: FormData): Promise<void> {
   if (!(LEVELS as readonly string[]).includes(level)) {
     redirect(orgPath(ctx.orgSlug, "/agents?status=invalid"));
   }
-  if (controlEnabled()) {
-    await setOrgAiAuthority(ctx.orgSlug, level);
-  } else {
-    await prisma.platOrganisation.update({ where: { id: ctx.orgId }, data: { aiAuthority: level } });
-  }
+  await setOrgAiAuthority(ctx.orgSlug, level);
   revalidatePath(orgPath(ctx.orgSlug, "/agents"));
   redirect(orgPath(ctx.orgSlug, `/agents?status=saved&level=${level}`));
 }

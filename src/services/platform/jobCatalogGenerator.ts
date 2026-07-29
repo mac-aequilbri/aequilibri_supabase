@@ -9,7 +9,7 @@
 // are already seeded, so `ensureJobCatalog` no-ops for them.
 
 import { callClaude } from "@/lib/claude";
-import { createJobCatalog, hasJobCatalog, type NewJobCatalogEntry } from "@/lib/airtable/control";
+import { createJobCatalog, hasJobCatalog, type NewJobCatalogEntry } from "@/lib/platform/controlPlane";
 import { logger } from "@/lib/logger";
 
 const ENGAGEMENTS = new Set(["short_job", "long_project", "ongoing", "seasonal"]);

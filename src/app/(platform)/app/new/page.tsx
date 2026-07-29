@@ -5,7 +5,7 @@
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/PageHeader";
 import { VERTICAL_TEMPLATE_BASE_IDS } from "@/lib/airtable/config";
-import { listTemplateRegistry } from "@/lib/airtable/control";
+import { listTemplateRegistry } from "@/lib/platform/controlPlane";
 import { isPlatformAdmin } from "@/lib/platform/org-context";
 import { DEFAULT_FEATURES } from "@/lib/platform/types";
 import { FormStepper } from "@/components/form/FormStepper";

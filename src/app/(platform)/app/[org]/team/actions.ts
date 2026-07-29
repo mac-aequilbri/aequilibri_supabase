@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { setControlAssignments, setProjectRlsEnforce } from "@/lib/airtable/control";
+import { setControlAssignments, setProjectRlsEnforce } from "@/lib/platform/controlPlane";
 import { requireAdmin, requireOrgCtx } from "@/lib/platform/org-context";
 import { orgPath } from "@/lib/platform/paths";
 import { inviteMember, setMemberActive, setMemberRole } from "@/lib/platform/provisioning";

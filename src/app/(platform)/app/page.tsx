@@ -6,13 +6,11 @@
 import Link from "next/link";
 import { OrgLogo } from "@/components/OrgLogo";
 import {
-  controlEnabled,
   listControlTeam,
   listOrgRegistry,
   readMetricsSnapshot,
   type OrgMetricsSnapshot,
-} from "@/lib/airtable/control";
-import { prisma } from "@/lib/db";
+} from "@/lib/platform/controlPlane";
 import { getAuthEmail, isPlatformAdmin } from "@/lib/platform/org-context";
 import { deleteOrgAction } from "./actions";
 import { ClientCardMetrics } from "./ClientCardMetrics";
@@ -50,39 +48,21 @@ export default async function OrgPickerPage({
   const email = await getAuthEmail();
   const canProvision = await isPlatformAdmin();
 
-  let orgs: OrgCard[];
-  if (controlEnabled()) {
-    const reg = await listOrgRegistry();
-    orgs = await Promise.all(
-      reg.map(async (e) => ({
-        slug: e.slug,
-        name: e.name,
-        vertical: e.vertical,
-        defaultEngagementType: e.defaultEngagementType,
-        emails: (await listControlTeam(e.slug)).map((m) => m.email.toLowerCase()),
-        logo: logoFromSettings(e.settings),
-        metrics: readMetricsSnapshot(e.settings),
-      })),
-    );
-    orgs.sort((a, b) => a.name.localeCompare(b.name));
-  } else {
-    const rows = await prisma.platOrganisation.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-      include: {
-        cfgTeam: { where: { isActive: true }, select: { email: true } },
-      },
-    });
-    orgs = rows.map((o) => ({
-      slug: o.slug,
-      name: o.name,
-      vertical: o.vertical,
-      defaultEngagementType: o.defaultEngagementType,
-      emails: o.cfgTeam.map((m) => m.email.toLowerCase()),
-      logo: logoFromSettings(o.settings),
-      metrics: null, // Postgres mode has no control-base cache; card fetches live.
-    }));
-  }
+  // Control plane resolves the store (Airtable control base or Postgres —
+  // lib/platform/controlPlane); the picker renders the same either way.
+  const reg = await listOrgRegistry();
+  const orgs: OrgCard[] = await Promise.all(
+    reg.map(async (e) => ({
+      slug: e.slug,
+      name: e.name,
+      vertical: e.vertical,
+      defaultEngagementType: e.defaultEngagementType,
+      emails: (await listControlTeam(e.slug)).map((m) => m.email.toLowerCase()),
+      logo: logoFromSettings(e.settings),
+      metrics: readMetricsSnapshot(e.settings),
+    })),
+  );
+  orgs.sort((a, b) => a.name.localeCompare(b.name));
   // Platform operators (PLATFORM_ADMIN_EMAILS) oversee every client, so they
   // see the full registry. Demo mode (no auth) also shows everything. Every
   // other signed-in user sees only the orgs they belong to.

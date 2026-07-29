@@ -12,8 +12,8 @@ const h = vi.hoisted(() => ({
   setOutboxStatus: vi.fn(),
 }));
 
-vi.mock("@/lib/airtable/control", () => ({
-  controlEnabled: h.controlEnabled,
+vi.mock("@/lib/platform/controlPlane", () => ({
+  controlPlaneEnabled: h.controlEnabled,
   hasActiveOutbound: h.hasActiveOutbound,
   enqueueOutbox: h.enqueueOutbox,
   listFailedOutbox: h.listFailedOutbox,

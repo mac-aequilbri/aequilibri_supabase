@@ -11,7 +11,7 @@
 // Business Owner bypass via rlsExempt() at the call sites.
 
 import { cache } from "react";
-import { controlEnabled, listControlAssignments } from "@/lib/airtable/control";
+import { controlPlaneEnabled, listControlAssignments } from "@/lib/platform/controlPlane";
 import { getCurrentViewer } from "./org-context";
 import { rlsExempt } from "./roles";
 import type { OrgCtx } from "./types";
@@ -21,9 +21,10 @@ export async function assignedJobRecIds(
   ctx: OrgCtx,
   email: string,
 ): Promise<ReadonlySet<string> | null> {
-  // Postgres-registry orgs have no central assignment store yet (parity TODO);
-  // every live org runs on the Airtable control plane, so treat them unscoped.
-  if (!email || !controlEnabled()) return null;
+  // Postgres orgs resolve assignments from PlatCtlAssignment (control plane,
+  // migration-plan Phase 3); Airtable orgs from the control base. No control
+  // plane at all (Airtable mode without a control base) stays unscoped.
+  if (!email || !controlPlaneEnabled()) return null;
   const rows = await listControlAssignments(ctx.orgSlug);
   const mine = rows.filter((a) => a.email === email.toLowerCase()).map((a) => a.jobRecId);
   return mine.length ? new Set(mine) : null;

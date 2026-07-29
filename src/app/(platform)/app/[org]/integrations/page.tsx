@@ -9,7 +9,7 @@ import { SubmitButton } from "@/components/form/SubmitButton";
 import { buttonClass } from "@/components/ui/Button";
 import { Chip, type ChipVariant } from "@/components/ui/Chip";
 import { MessageBar } from "@/components/ui/MessageBar";
-import { getOrgWebhookSecret, listConnections, listOutbox } from "@/lib/airtable/control";
+import { getOrgWebhookSecret, listConnections, listOutbox } from "@/lib/platform/controlPlane";
 import { requireAdmin, requireOrgCtx } from "@/lib/platform/org-context";
 import { addConnection, removeConnection, toggleConnection } from "./actions";
 

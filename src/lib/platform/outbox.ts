@@ -13,12 +13,12 @@
 
 import { airtableEnabled, core } from "@/lib/airtable";
 import {
-  controlEnabled,
+  controlPlaneEnabled,
   enqueueOutbox,
   hasActiveOutbound,
   listFailedOutbox,
   setOutboxStatus,
-} from "@/lib/airtable/control";
+} from "@/lib/platform/controlPlane";
 import { prisma } from "@/lib/db";
 import { logger, errMeta } from "@/lib/logger";
 import type { OrgCtx } from "./types";
@@ -40,7 +40,7 @@ export async function emitOutboundEvent(
   },
 ): Promise<void> {
   try {
-    if (!controlEnabled()) return;
+    if (!controlPlaneEnabled()) return;
     if (!(await hasActiveOutbound(ctx.orgSlug))) return;
     await enqueueOutbox({
       orgSlug: ctx.orgSlug,
@@ -77,7 +77,7 @@ export function outboxRedriveTarget(attempts: number, max = MAX_OUTBOX_ATTEMPTS)
 export async function redriveOutbox(
   max = MAX_OUTBOX_ATTEMPTS,
 ): Promise<{ redriven: number; deadLettered: number }> {
-  if (!controlEnabled()) return { redriven: 0, deadLettered: 0 };
+  if (!controlPlaneEnabled()) return { redriven: 0, deadLettered: 0 };
   let redriven = 0;
   let deadLettered = 0;
   const failed = await listFailedOutbox();

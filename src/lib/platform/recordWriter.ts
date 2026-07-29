@@ -856,14 +856,17 @@ export async function writeRecord(ctx: OrgCtx, req: WriteRequest): Promise<Write
     const recordId = await performWrite(ctx, req.table, def, req.op, req.recordId, data);
     // P2: auto-assign a new job's human creator to it, so they keep access under
     // project-RLS enforcement (docs/project-rls-activation.md). Best-effort —
-    // never fails the write. Airtable/control-plane only (rec… ids).
+    // never fails the write. Works on both stores: Airtable rec… ids and
+    // Postgres numeric ids (PlatCtlAssignment.jobRecId holds either).
     if (req.table === "job" && req.op === "create" && req.actor.type === "human") {
       try {
-        const { controlEnabled, addControlAssignment } = await import("@/lib/airtable/control");
-        if (controlEnabled() && typeof recordId === "string" && recordId.startsWith("rec")) {
+        const { controlPlaneEnabled, addControlAssignment } = await import(
+          "@/lib/platform/controlPlane"
+        );
+        if (controlPlaneEnabled() && recordId != null) {
           const { getCurrentViewer } = await import("./org-context");
           const viewer = await getCurrentViewer(ctx);
-          if (viewer.email) await addControlAssignment(ctx.orgSlug, viewer.email, recordId);
+          if (viewer.email) await addControlAssignment(ctx.orgSlug, viewer.email, String(recordId));
         }
       } catch (e) {
         logger.warn("Auto-assign creator to new job failed", { orgId: ctx.orgId, ...errMeta(e) });

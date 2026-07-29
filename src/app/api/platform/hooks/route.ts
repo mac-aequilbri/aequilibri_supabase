@@ -22,11 +22,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import {
-  controlEnabled,
+  controlPlaneEnabled,
   getActiveConnection,
   getOrgWebhookSecret,
   touchConnectionHealth,
-} from "@/lib/airtable/control";
+} from "@/lib/platform/controlPlane";
 import { getOrgCtx } from "@/lib/platform/org-context";
 import type { Module2SourceChannel } from "@/lib/platform/ingestion";
 import { verifyWebhook } from "@/lib/platform/webhookAuth";
@@ -111,9 +111,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  // 6b. Default-deny: when the control base is on, the channel must have an
-  // active inbound connection for this org. Signature-only when control is off.
-  if (controlEnabled() && !(await getActiveConnection(orgSlug, channel, "in"))) {
+  // 6b. Default-deny: when a control plane is available, the channel must have
+  // an active inbound connection for this org. Signature-only without one.
+  if (controlPlaneEnabled() && !(await getActiveConnection(orgSlug, channel, "in"))) {
     return NextResponse.json(
       { error: `Channel '${channel}' is not enabled for this org` },
       { status: 403 },

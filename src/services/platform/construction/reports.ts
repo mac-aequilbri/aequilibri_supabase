@@ -188,7 +188,7 @@ export async function generateReport(
   if (!def) {
     // Not in the code catalog → try the org's saved templates (Phase 4):
     // a template is a stored promptSpec, so it generates via the custom path.
-    const { getReportTemplate } = await import("@/lib/airtable/control");
+    const { getReportTemplate } = await import("@/lib/platform/controlPlane");
     const tpl = await getReportTemplate(ctx.orgSlug, reportId);
     if (!tpl) throw new Error(`Unknown report type: ${reportId}`);
     return generateCustomReport(ctx, viewer, {

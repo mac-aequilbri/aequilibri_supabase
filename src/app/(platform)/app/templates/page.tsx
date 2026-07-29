@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmSubmitButton } from "@/components/form/ConfirmSubmitButton";
 import { SubmitButton } from "@/components/form/SubmitButton";
-import { listTemplateRegistry } from "@/lib/airtable/control";
+import { listTemplateRegistry } from "@/lib/platform/controlPlane";
 import { isPlatformAdmin } from "@/lib/platform/org-context";
 import { deleteTemplateMapping, toggleTemplateMapping } from "./actions";
 

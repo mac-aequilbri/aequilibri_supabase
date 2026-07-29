@@ -2,9 +2,10 @@
 // access-control model (the framework's §2.3/§7 define the Clerk role mapping
 // but not how users get accounts; this module fills that gap).
 //
-// Design: the team registry (control-base PLAT_TEAM, or PlatCfgTeamMember in
-// Postgres mode) is the authoritative membership + role store — Airtable is the
-// system of record, Clerk authenticates identity only. Inviting a user means
+// Design: the control plane's team registry (control-base PLAT_TEAM, or
+// PlatCtlTeamMember in Postgres mode — see lib/platform/controlPlane) is the
+// authoritative membership + role store; Clerk authenticates identity only.
+// Inviting a user means
 // creating their member row (org-context matches the signed-in Clerk email
 // against it) and, when Clerk is active, sending a Clerk invitation email so
 // they can create an account. A user who already has a Clerk account gains
@@ -15,13 +16,11 @@
 // alone — it authenticates identity, membership is what authorizes.
 
 import {
-  controlEnabled,
   createControlTeamMember,
   listControlTeamAll,
   updateControlTeamMember,
   type ControlTeamMember,
-} from "@/lib/airtable/control";
-import { prisma } from "@/lib/db";
+} from "@/lib/platform/controlPlane";
 import { logger, errMeta } from "@/lib/logger";
 import { clerkEnabled } from "./authConfig";
 // Composite-aware ("builder+finance") — sub-roles survive storage; owner
@@ -44,14 +43,7 @@ export interface InviteInput {
 /** Every member of the org (active and inactive) from whichever store holds
  *  the registry, roles normalized. */
 export async function listMembers(ctx: OrgCtx): Promise<ControlTeamMember[]> {
-  const members = controlEnabled()
-    ? await listControlTeamAll(ctx.orgSlug)
-    : (
-        await prisma.platCfgTeamMember.findMany({
-          where: { orgId: ctx.orgId },
-          orderBy: [{ id: "asc" }],
-        })
-      ).map((m) => ({ name: m.name, email: m.email, role: m.role, isActive: m.isActive }));
+  const members = await listControlTeamAll(ctx.orgSlug);
   return members.map((m) => ({ ...m, role: normalizeTeamRole(m.role) }));
 }
 
@@ -73,14 +65,7 @@ async function patchMember(
   email: string,
   patch: { role?: string; isActive?: boolean },
 ): Promise<boolean> {
-  if (controlEnabled()) {
-    return updateControlTeamMember(ctx.orgSlug, email, patch);
-  }
-  const members = await prisma.platCfgTeamMember.findMany({ where: { orgId: ctx.orgId } });
-  const m = members.find((x) => x.email.toLowerCase() === email.toLowerCase());
-  if (!m) return false;
-  await prisma.platCfgTeamMember.update({ where: { id: m.id }, data: patch });
-  return true;
+  return updateControlTeamMember(ctx.orgSlug, email, patch);
 }
 
 /** Send a Clerk invitation email. Best-effort: an email that already has a
@@ -122,13 +107,7 @@ export async function inviteMember(ctx: OrgCtx, input: InviteInput): Promise<Inv
     return sent === "invited" ? "invited" : "reactivated";
   }
 
-  if (controlEnabled()) {
-    await createControlTeamMember(ctx.orgSlug, { name, email, role });
-  } else {
-    await prisma.platCfgTeamMember.create({
-      data: { orgId: ctx.orgId, name, email, role },
-    });
-  }
+  await createControlTeamMember(ctx.orgSlug, { name, email, role });
   const sent = await sendClerkInvitation(email);
   return sent === "invited" ? "invited" : "added";
 }

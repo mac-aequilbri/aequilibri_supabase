@@ -6,7 +6,7 @@ import {
   deleteConnection,
   updateConnection,
   type ConnectionDirection,
-} from "@/lib/airtable/control";
+} from "@/lib/platform/controlPlane";
 import { requireAdmin, requireOrgCtx } from "@/lib/platform/org-context";
 import { orgPath } from "@/lib/platform/paths";
 

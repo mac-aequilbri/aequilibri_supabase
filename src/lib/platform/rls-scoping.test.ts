@@ -21,8 +21,8 @@ vi.mock("@/lib/airtable", () => ({
   airtableEnabled: () => true,
   core: { list: h.coreList, get: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() },
 }));
-vi.mock("@/lib/airtable/control", () => ({
-  controlEnabled: () => true,
+vi.mock("@/lib/platform/controlPlane", () => ({
+  controlPlaneEnabled: () => true,
   listControlAssignments: h.listControlAssignments,
 }));
 vi.mock("./org-context", () => ({

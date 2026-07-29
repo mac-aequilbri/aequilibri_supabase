@@ -11,7 +11,7 @@
 //    for the current week — opt-in per org (costs AI tokens) via the
 //    PlatCfgSetting "automation.weekly_reports" = true
 
-import { controlEnabled, listOrgRegistry } from "@/lib/airtable/control";
+import { listOrgRegistry } from "@/lib/platform/controlPlane";
 import { prisma } from "@/lib/db";
 import { getOrgCtx } from "@/lib/platform/org-context";
 import { redriveOutbox } from "@/lib/platform/outbox";
@@ -82,12 +82,12 @@ async function runScheduledTasksInner(now: Date): Promise<SchedulerRunResult> {
     errors: [],
   };
 
-  const orgs: { id: number; slug: string }[] = controlEnabled()
-    ? (await listOrgRegistry()).map((o) => ({ id: o.orgId, slug: o.slug }))
-    : await prisma.platOrganisation.findMany({
-        where: { isActive: true },
-        select: { id: true, slug: true },
-      });
+  // §2b rule 8/registry principle: org enumeration always goes through the
+  // control plane (Airtable control base or PlatOrganisation, resolved there).
+  const orgs: { id: number; slug: string }[] = (await listOrgRegistry()).map((o) => ({
+    id: o.orgId,
+    slug: o.slug,
+  }));
   for (const org of orgs) {
     const ctx = await getOrgCtx(org.slug);
     if (!ctx) continue;

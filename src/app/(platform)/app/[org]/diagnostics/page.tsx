@@ -39,8 +39,8 @@ const POSTGRES_BY_DESIGN = [
 
 // The inverse asymmetry: these only work with AIRTABLE_MIGRATION on.
 const AIRTABLE_ONLY = [
-  "Control plane: assignments, connections, outbox, template/job/report catalogs",
   "Cascade write-effects + advisories (runCascades is Airtable-gated)",
+  "Schema drift checks + base provisioning (inherently Airtable concerns)",
 ];
 
 async function airtableCount(orgSlug: string, table: CoreTableName): Promise<number | string> {

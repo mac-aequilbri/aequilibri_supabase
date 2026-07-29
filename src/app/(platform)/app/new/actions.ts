@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { VERTICAL_TEMPLATE_BASE_IDS } from "@/lib/airtable/config";
-import { getTemplateRegistryEntry } from "@/lib/airtable/control";
+import { getTemplateRegistryEntry } from "@/lib/platform/controlPlane";
 import { clerkEnabled } from "@/lib/platform/authConfig";
 import { normalizeTeamRole, type TeamRole } from "@/lib/platform/module1Governance";
 import { AiAuthority, DEFAULT_FEATURES, EngagementType } from "@/lib/platform/types";

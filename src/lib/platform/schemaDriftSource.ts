@@ -7,7 +7,9 @@
 // Read-only and best-effort: one base failing to read never breaks the report.
 
 import { airtableEnabled } from "@/lib/airtable/config";
-import { controlEnabled, listOrgRegistry } from "@/lib/airtable/control";
+// Schema drift is an Airtable-only concern: enumerate via the AIRTABLE control
+// registry specifically (controlEnabled), never the PG store.
+import { controlEnabled, listOrgRegistry } from "@/lib/platform/controlPlane";
 import {
   expectedPlatformSchema,
   readBaseSchema,

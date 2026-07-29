@@ -9,7 +9,7 @@ import { SubmitButton } from "@/components/form/SubmitButton";
 import { buttonClass } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { MessageBar, type MessageVariant } from "@/components/ui/MessageBar";
-import { controlEnabled, listControlAssignments } from "@/lib/airtable/control";
+import { controlPlaneEnabled, listControlAssignments } from "@/lib/platform/controlPlane";
 import { clerkEnabled } from "@/lib/platform/authConfig";
 import { loadJobOptions } from "@/lib/platform/jobOptionsSource";
 import { requireAdmin, requireOrgCtx } from "@/lib/platform/org-context";
@@ -85,9 +85,9 @@ export default async function TeamPage({
   );
   const authOn = clerkEnabled();
 
-  // Project (job) assignments = the RLS access list. Only meaningful on the
-  // Airtable control plane (where PLAT_ASSIGNMENTS lives); hidden otherwise.
-  const showProjects = controlEnabled();
+  // Project (job) assignments = the RLS access list, from the control plane
+  // (PLAT_ASSIGNMENTS on Airtable, PlatCtlAssignment on Postgres).
+  const showProjects = controlPlaneEnabled();
   const jobs = showProjects ? await loadJobOptions(ctx) : [];
   const capped = jobs.length >= 200; // loadJobOptions caps the picker at 200
   const assignmentsByEmail = new Map<string, string[]>();

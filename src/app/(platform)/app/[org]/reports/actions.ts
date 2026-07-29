@@ -75,7 +75,7 @@ export async function saveTemplateAction(formData: FormData): Promise<void> {
 
   // Optional user-supplied name; fall back to the prompt-derived title.
   const templateTitle = String(formData.get("templateTitle") ?? "").trim();
-  const { createReportTemplate } = await import("@/lib/airtable/control");
+  const { createReportTemplate } = await import("@/lib/platform/controlPlane");
   await createReportTemplate({
     orgSlug: ctx.orgSlug,
     key: `tpl_${Date.now().toString(36)}`,

@@ -40,6 +40,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prismaUnscoped.platOrganisation.deleteMany({ where: { slug: { in: SLUGS } } });
+  await prisma.platCtlTeamMember.deleteMany({ where: { orgSlug: { in: SLUGS } } });
 });
 
 describe("org-isolation guard", () => {
@@ -115,11 +116,14 @@ describe("encrypted token storage", () => {
 
 describe("RBAC — demo mode resolves the org's admin", () => {
   it("getCurrentUser/requireAdmin pick an admin even when other roles exist", async () => {
-    await prisma.platCfgTeamMember.create({
-      data: { orgId: A.orgId, name: "Reader", role: "readonly", email: "reader@iso.test" },
+    // Team lives in the control plane (PlatCtlTeamMember, slug-keyed) as of
+    // migration-plan Phase 3. Not FK-cascaded with the org — clean explicitly.
+    await prisma.platCtlTeamMember.deleteMany({ where: { orgSlug: A.orgSlug } });
+    await prisma.platCtlTeamMember.create({
+      data: { orgSlug: A.orgSlug, name: "Reader", role: "readonly", email: "reader@iso.test" },
     });
-    await prisma.platCfgTeamMember.create({
-      data: { orgId: A.orgId, name: "Boss", role: "admin", email: "boss@iso.test" },
+    await prisma.platCtlTeamMember.create({
+      data: { orgSlug: A.orgSlug, name: "Boss", role: "admin", email: "boss@iso.test" },
     });
     // Legacy "admin" normalizes to "owner" (see normalizeTeamRole), which is the
     // role the admin gate (isAdminRole) recognises.

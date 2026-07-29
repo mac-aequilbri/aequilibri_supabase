@@ -3,7 +3,7 @@ import { FilterBar } from "@/components/FilterBar";
 import { GroupHeading } from "@/components/GroupHeader";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/PageHeader";
 import { airtableEnabled } from "@/lib/airtable";
-import { getOrgRegistry, readMetricsSnapshot } from "@/lib/airtable/control";
+import { getOrgRegistry, readMetricsSnapshot } from "@/lib/platform/controlPlane";
 import { currency } from "@/lib/format";
 import { loadJobsList, loadJobsPage, type JobListView } from "@/lib/platform/jobsListSource";
 import {

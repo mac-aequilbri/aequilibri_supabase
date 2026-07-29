@@ -70,7 +70,7 @@ export default async function ReportsPage({
   const query = parseListQuery(sp, reportsListConfig);
   const viewer = await getCurrentViewer(ctx);
   const reportCaps = reportingCapabilities(viewer.role);
-  const { listReportTemplates } = await import("@/lib/airtable/control");
+  const { listReportTemplates } = await import("@/lib/platform/controlPlane");
   const [allReports, jobs, templates] = await Promise.all([
     loadWeeklyReports(ctx),
     loadJobOptions(ctx), // jobs feed the AI-generate dropdown

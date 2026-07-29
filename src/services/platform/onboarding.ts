@@ -15,7 +15,7 @@ import {
   createControlTeamMember,
   createOrgRegistry,
   getOrgRegistry,
-} from "@/lib/airtable/control";
+} from "@/lib/platform/controlPlane";
 import { airtableMapFor, toFields } from "@/lib/airtable/fieldMaps";
 import { ensureAppRuntimeTables, probeBaseDataAccess, provisionClientBase } from "@/lib/airtable/provision";
 import { prisma } from "@/lib/db";
@@ -251,10 +251,8 @@ export async function provisionOrganisation(input: ProvisionInput): Promise<Prov
     ...(input.logoDataUrl ? { branding: { logo: input.logoDataUrl } } : {}),
   });
 
-  // Slug uniqueness — checked in whichever store owns the org registry.
-  const exists = controlEnabled()
-    ? (await getOrgRegistry(slug)) !== null
-    : (await prisma.platOrganisation.findFirst({ where: { slug } })) !== null;
+  // Slug uniqueness — the control plane resolves the store.
+  const exists = (await getOrgRegistry(slug)) !== null;
   if (exists) {
     return { ok: false, error: `An organisation with slug "${slug}" already exists.` };
   }
@@ -388,9 +386,11 @@ export async function provisionOrganisation(input: ProvisionInput): Promise<Prov
     });
 
     if (input.adminName.trim()) {
-      await tx.platCfgTeamMember.create({
+      // Team lives in the control plane (PlatCtlTeamMember, keyed by slug) —
+      // migration-plan Phase 3 / §2b topology.
+      await tx.platCtlTeamMember.create({
         data: {
-          orgId: org.id,
+          orgSlug: slug,
           name: input.adminName.trim(),
           role: normalizeTeamRole(input.adminRole),
           email: input.adminEmail.trim(),
@@ -471,6 +471,15 @@ export async function provisionOrganisation(input: ProvisionInput): Promise<Prov
     } catch (err) {
       logger.warn("Airtable config mirror skipped", { slug, ...errMeta(err) });
     }
+  }
+
+  // Draft a job-category catalog for a brand-new vertical (PG control plane;
+  // no-op for verticals that already have one). Best-effort, like the
+  // Airtable-control branch above.
+  try {
+    await ensureJobCatalog(vertical, input.industryLabel ?? vertical, input.subIndustryLabel ?? "");
+  } catch (err) {
+    logger.warn("Job-catalog draft skipped", { slug, vertical, ...errMeta(err) });
   }
 
   return { ok: true, orgId, slug };

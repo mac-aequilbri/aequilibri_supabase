@@ -198,6 +198,75 @@ guard-regex split, `db(ctx)` resolver) land in Phase 3.
   squat port 3000 / the Next dev lock / the Prisma DLL. A machine reboot would
   clear the herd; until then, kill by PID via the `.next/dev/lock` file.
 
+---
+
+## Phase 3 — Control plane to Postgres (started 2026-07-29)
+
+### Stage A — repository layer (2026-07-29) — DONE (plan items 1–7 + exit criteria)
+
+**Design:** one seam, `src/lib/platform/controlPlane.ts`, mirroring
+`lib/airtable/control`'s full consumed surface (~35 functions, 8 concerns).
+Each function branches internally: Airtable control base when
+`controlEnabled()` (legacy, unchanged), else Postgres. New gate
+`controlPlaneEnabled()` = Airtable-control OR PG mode — every platform feature
+now gates on it; bare `controlEnabled()` survives only for genuinely
+Airtable-only concerns (schema drift, base provisioning, registry-row snapshot
+cache freshness). This satisfies plan §3.6 (no per-call-site branching; call
+sites changed import path only) and Phase 6 deletes the airtable halves.
+
+**PG store mapping:**
+- Org registry = `PlatOrganisation` (it already was the PG registry; settings
+  JSON helpers — metrics snapshot, webhook secret, generalJobId, RLS-enforce
+  flag — merge into its `settings`; aiAuthority is a column).
+  `PlatCtlOrgRegistry` is NOT used at runtime — it stays as the mover landing
+  zone for the Airtable control-base export (Phase 4/5 merges it into
+  PlatOrganisation). Offboarding soft-deactivates (preserves tenant data,
+  mirroring the undeletable Airtable base) + removes control team/assignments.
+- **Team moved from tenant-side `PlatCfgTeamMember` to control-side
+  `PlatCtlTeamMember`** (slug-keyed) per §2b topology — auth must resolve
+  before any tenant-DB connection. org-context, provisioning, onboarding's PG
+  transaction, and 3 test suites updated; PlatCfgTeamMember remains only as
+  legacy dev data (mover decision in Phase 4).
+- Assignments = `PlatCtlAssignment` (jobRecId column holds Airtable rec… ids
+  OR PG numeric ids as strings). **RLS now resolves on Postgres** — the
+  fail-open/fail-closed semantics and `project_rls_enforce` flag work
+  unchanged; recordWriter's auto-assign-creator-on-job-create now fires in PG
+  mode too (was rec…-id-gated).
+- Connections/Outbox/Report catalog/Template registry/Job catalog = their
+  `PlatCtl*` models. **Outbox events in PG mode carry numeric entity/job ids
+  as strings** (plan §3.4's "PG-native id story" — n8n side reworked Phase 6).
+- Scheduler/org picker/hooks default-deny/team page/agents/integrations/
+  reports/templates/onboarding rewired through the seam (~24 files; most were
+  a pure import swap).
+
+**Also done:** `scripts/seed-control-plane.mjs` (§3.7 — org + owner member +
+curated job catalogs from `scripts/job-catalog-seed.json`, idempotent; run for
+demo-walk: 34 construction + 12 roofing rows). Boot guard + diagnostics
+updated.
+
+**Verified:** boots with `AIRTABLE_CONTROL_BASE_ID` unset (commented out in
+.env) — boot guard prints "control base off / control plane served from
+Postgres"; org picker lists from PlatOrganisation; team page renders the
+seeded PlatCtl owner + the project-assignments (RLS) UI, previously
+Airtable-only; integrations page renders. tsc clean; vitest 38 files /
+295 tests green (8 new controlPlane round-trip tests incl. RLS scoping via
+PlatCtlAssignment, fail-open→scoped→cleared).
+
+### Stage B — remaining Phase 3 work
+1. **Cascade engine un-gate** (plan §3.8, found in Phase 2).
+2. **§2b physical split**: control Prisma schema + separate control DB,
+   `db(ctx)` tenant resolver, native RLS in tenant DBs, migrate fan-out
+   script, composite `(orgId, airtableRecordId)` fix across the 37 bridged
+   models.
+
+### Notes / gotchas
+- `templates/actions.ts` is UTF-16-encoded on disk (grep sees it as binary) —
+  edit via tooling that preserves encoding.
+- vitest's `vi.mock` paths had to follow the import-path change
+  (outbox/rls-scoping suites mock `@/lib/platform/controlPlane` now).
+- PlatCtl* rows are slug-keyed and NOT FK-cascaded with the org — test
+  suites clean them explicitly.
+
 ### Setup notes
 - Route walk runs in **demo mode** (Clerk keys temporarily commented out of
   `.env`): the walk needs an operator session, demo mode is

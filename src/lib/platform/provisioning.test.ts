@@ -12,6 +12,9 @@ let ctx: OrgCtx;
 
 beforeAll(async () => {
   await prismaUnscoped.platOrganisation.deleteMany({ where: { slug: SLUG } });
+  // Team rows live in the control plane (PlatCtlTeamMember, slug-keyed) and
+  // are not FK-cascaded with the org — clean them explicitly.
+  await prisma.platCtlTeamMember.deleteMany({ where: { orgSlug: SLUG } });
   const org = await prisma.platOrganisation.create({
     data: { slug: SLUG, name: "Provisioning Test Org" },
   });
@@ -29,6 +32,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prismaUnscoped.platOrganisation.deleteMany({ where: { slug: SLUG } });
+  await prisma.platCtlTeamMember.deleteMany({ where: { orgSlug: SLUG } });
 });
 
 describe("inviteMember", () => {
