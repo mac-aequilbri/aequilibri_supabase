@@ -20,14 +20,27 @@ import { PrismaClient as ControlPrismaClient } from "@prisma/control-client";
 import { TABLES, EXCLUDED, REVERSE_STATUS_MAPS } from "./_map.mjs";
 import { envVar, listAll, loadState, saveState, parseArgs } from "./_shared.mjs";
 
-const USAGE = "Usage: node scripts/migration/airtable-to-pg.mjs --org <slug> [--base appXXX] [--tables a,b] [--execute]";
+const USAGE = "Usage: node scripts/migration/airtable-to-pg.mjs --org <slug> [--base appXXX] [--tables a,b] [--target-url postgres://…] [--execute]";
 const { org, base: baseArg, tables: only, execute } = parseArgs(USAGE);
 envVar("DATABASE_URL"); // fail fast with a clear message
 envVar("CONTROL_DATABASE_URL");
-const prisma = new PrismaClient();
 const controlDb = new ControlPrismaClient();
 
 const orgRow = await controlDb.platOrganisation.findUnique({ where: { slug: org } });
+// §2b: rows land in the org's OWN tenant database when one is provisioned.
+// Resolution order: --target-url > the org's settings.tenantDatabaseUrl >
+// the shared default (DATABASE_URL).
+const targetIdx = process.argv.indexOf("--target-url");
+let targetUrl = targetIdx > -1 ? process.argv[targetIdx + 1] : null;
+if (!targetUrl && orgRow) {
+  try {
+    targetUrl = JSON.parse(orgRow.settings || "{}")?.tenantDatabaseUrl || null;
+  } catch {
+    /* default */
+  }
+}
+const prisma = targetUrl ? new PrismaClient({ datasourceUrl: targetUrl }) : new PrismaClient();
+console.log(`target tenant DB: ${targetUrl ?? "(default DATABASE_URL)"}`);
 if (!orgRow) throw new Error(`No PlatOrganisation with slug '${org}' — create/seed the org first.`);
 const baseId = baseArg ?? orgRow.airtableBaseId;
 if (!baseId) throw new Error(`Org '${org}' has no airtableBaseId — pass --base appXXX.`);
@@ -72,7 +85,17 @@ for (const t of TABLES) {
     console.log(`- ${t.key}: checkpointed done, skipping (delete ${statePath} to redo)`);
     continue;
   }
-  const records = (await listAll(baseId, t.air)).filter((r) => !t.airFilter || t.airFilter(r.fields));
+  // Vertical templates differ (e.g. legal bases carry no VENDORS): an absent
+  // table is a skip, not a failure — reconciliation reports coverage later.
+  let allRecords;
+  try {
+    allRecords = await listAll(baseId, t.air);
+  } catch (err) {
+    console.log(`- ${t.key}: ${t.air} absent/unreadable on this base — skipped (${String(err.message).slice(0, 80)})`);
+    summary.push({ table: t.key, airRows: "absent", created: 0, updated: 0, skipped: 0 });
+    continue;
+  }
+  const records = allRecords.filter((r) => !t.airFilter || t.airFilter(r.fields));
   const map = await recMap(t);
   let created = 0, updated = 0, skipped = 0;
   const pendingSelf = [];
@@ -86,9 +109,14 @@ for (const t of TABLES) {
     Object.assign(data, t.pgDerive ? t.pgDerive(rec.fields) : {});
     let unresolved = false;
     for (const l of t.links) {
-      const arr = rec.fields[l.air];
-      if (Array.isArray(arr) && arr[0]) {
-        const pk = (await recMap(byKey[l.target])).get(arr[0]);
+      const v = rec.fields[l.air];
+      // `text: true` links carry a bare id string (e.g. CHAT_MESSAGES.
+      // Session_Id) instead of Airtable's link array — same recMap resolution.
+      const airId = l.text
+        ? (typeof v === "string" && v ? v : null)
+        : (Array.isArray(v) && v[0] ? v[0] : null);
+      if (airId) {
+        const pk = (await recMap(byKey[l.target])).get(airId);
         if (pk) data[l.pg] = pk;
         else unresolved = true;
       }

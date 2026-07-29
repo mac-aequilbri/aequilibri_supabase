@@ -37,7 +37,9 @@ deploy("default tenant (DATABASE_URL)", {});
 //    (§2b rule 7: cross-tenant operations iterate the registry, never a
 //    hand-maintained list).
 const controlDb = new ControlPrismaClient();
-const orgs = await controlDb.platOrganisation.findMany({ where: { isActive: true } });
+// ALL orgs, active or not: a deactivated org's database still exists and must
+// stay schema-current so reactivation never meets a drifted schema.
+const orgs = await controlDb.platOrganisation.findMany();
 const summary = [];
 for (const org of orgs) {
   let url = null;

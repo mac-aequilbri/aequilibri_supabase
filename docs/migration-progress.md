@@ -371,6 +371,50 @@ through org-context → db(ctx)) while `/app/demo-walk/projects` served from
 the shared DB — no cross-contamination either way. Scratch org deactivated
 again after the proof. Gates: tsc clean, 304/304 tests, app boots.
 
+---
+
+## Phase 4 — Excluded data + attachments (2026-07-29)
+
+Owner decisions: **migrate chat/audit history; model CHANGE_LOG; drop
+DOMAIN_LABELS + REGIONS.**
+
+### Done
+1. **`PlatConChangeLog`** model (migration `20260729240000_change_log`,
+   fanned out to all DBs): the non-variation change register —
+   variation rows keep mapping to PlatConVariationOrder; the `change_log`
+   mover entry takes the complement (`Change_Type !== "Variation"`).
+   Data-preservation model; no app window writes it yet.
+2. **Seven new mover entries** in `_map.mjs`, each mirroring the module code's
+   authoritative Airtable conventions (JSON riding in Evidence/Notes/
+   Accuracy_Summary unpacked via pgDerive): `change_log`, `hypothesis`,
+   `correction`, `intelligence_snapshot`, `chat_session`, `chat_message`,
+   `execution_log`. Chat tables use the new **text-link** support
+   (`text: true` — Session_Id/Job_Id are string fields, not record links).
+3. **Control-base mover** `scripts/migration/airtable-control-to-pg.mjs`
+   (Phase 4.4): PLAT_* → PlatCtl* landing zone + PlatOrganisation merge-by-
+   slug. **Dry-run verified against the live control base** (read-only):
+   7 orgs / 16 team / 3 connections / 3 outbox / 1 report template /
+   3 template mappings / 66 job-catalog rows.
+4. **Attachment pipeline** `scripts/migration/download-attachments.mjs`
+   (Phase 4.5): downloads DOCUMENTS.File binaries during export (URLs expire
+   ~2h), writes a per-org manifest, `--apply-refs` re-points PlatDocument
+   storageProvider/storageRef (first file on the row; extras in the manifest).
+   **Tested against BOTH live bases** (read-only): pipeline executes
+   end-to-end; meta-API scan confirms DOCUMENTS.File is the ONLY attachment
+   field on either base and both are currently EMPTY (Drive-URL storage is
+   the norm) — so no binaries exist to move today; re-run at cutover catches
+   any added later. Local dir → AU object storage sync is a Phase 7 ops step.
+5. **Mover hardening for Phase 5**: `--target-url` (or the org's
+   settings.tenantDatabaseUrl) routes rows into per-org tenant DBs;
+   network-level fetch failures now retry like 5xx (flaky links must not
+   kill checkpointed runs); absent tables (vertical differences — Meridian
+   has no VENDORS) skip-and-log instead of aborting.
+6. **PENDING_WRITES** confirmed excluded (the PG claim registry was always
+   authoritative); DOMAIN_LABELS/REGIONS drop recorded; EXCLUDED list updated.
+7. Meridian full-map dry run (read-only) exercises every entry incl. the new
+   ones — mapper fallout found and fixed (absent-table 403). Fan-out script
+   now covers DEACTIVATED orgs' DBs too (schema-current for reactivation).
+
 ### Known caveats carried forward
 1. **Portal-token lookup** searches the default tenant DB only — before any
    org WITH PORTAL TOKENS is activated onto its own database, token

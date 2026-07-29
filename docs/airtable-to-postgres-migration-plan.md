@@ -202,8 +202,8 @@ Extend the movers for everything mover-v1 excluded:
 ## Rough total: 4–6 weeks engineering (Phases 0–6) + ops cutover.
 
 ## Open decisions for the owner (ask before the relevant phase)
-1. Chat/audit history: migrate or archive? (Phase 4)
-2. CHANGE_LOG / DOMAIN_LABELS / REGIONS: model or drop? (Phase 4)
+1. ~~Chat/audit history: migrate or archive? (Phase 4)~~ **DECIDED 2026-07-29: migrate** (chat sessions/messages + EXECUTION_LOG map entries added).
+2. ~~CHANGE_LOG / DOMAIN_LABELS / REGIONS: model or drop? (Phase 4)~~ **DECIDED 2026-07-29: model CHANGE_LOG** (PlatConChangeLog, non-variation rows), **drop DOMAIN_LABELS + REGIONS**.
 3. Keep `pg-to-airtable.mjs` rollback capability through cutover, or delete in Phase 6?
 4. At-rest-only vs processing residency — determines app-compute location and whether Clerk/Anthropic/n8n need replacing. (Phase 7, but affects scope)
 5. New repo/remote name + Render-vs-AU-host for app compute.

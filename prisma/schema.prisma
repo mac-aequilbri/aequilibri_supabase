@@ -1371,6 +1371,36 @@ model PlatConCashflowLedger {
   @@map("plat_con_cashflowledger")
 }
 
+// CHANGE_LOG (Spec 12 Core) — the full change register. Variation orders
+// (Change_Type="Variation") map to PlatConVariationOrder; THIS model holds
+// every other change row so the register survives the Airtable exit intact
+// (owner decision 2026-07-29, migration-plan Phase 4.6: model CHANGE_LOG;
+// DOMAIN_LABELS/REGIONS dropped). Data-preservation model: written by the
+// mover; no app window writes it yet. Bare Int refs (PlatComms convention).
+model PlatConChangeLog {
+  id               Int       @id @default(autoincrement())
+  airtableRecordId String?   @map("airtable_record_id") @db.VarChar(20)
+  orgId            Int       @map("org_id")
+  jobId            Int?      @map("job_id")
+  phaseId          Int?      @map("phase_id")
+  linkedIssueId    Int?      @map("linked_issue_id")
+  name             String    @default("") @db.VarChar(300)
+  changeType       String    @default("") @map("change_type") @db.VarChar(50)
+  description      String    @default("")
+  status           String    @default("") @db.VarChar(30)
+  impactCost       Decimal   @default(0) @map("impact_cost") @db.Decimal(14, 2)
+  impactDays       Int       @default(0) @map("impact_days")
+  dateRaised       DateTime? @map("date_raised") @db.Date
+  dateResolved     DateTime? @map("date_resolved") @db.Date
+  raisedBy         String    @default("") @map("raised_by") @db.VarChar(200)
+  notes            String    @default("")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@unique([orgId, airtableRecordId])
+  @@index([orgId, changeType])
+  @@map("plat_con_changelog")
+}
+
 model PlatConRisk {
   id               Int       @id @default(autoincrement())
   // Airtable record-id bridge (backend-switch Phase B): the rec… id of this

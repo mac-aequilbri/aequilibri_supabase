@@ -36,7 +36,16 @@ async function api(method, url, body) {
   if (body) headers["Content-Type"] = "application/json";
   for (let attempt = 1; attempt <= 5; attempt++) {
     await paced();
-    const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    let res;
+    try {
+      res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    } catch (err) {
+      // Network-level failure (connect/headers timeout, reset) — retry like a
+      // 5xx; flaky links must not kill an hours-long checkpointed run.
+      if (attempt === 5) throw err;
+      await sleep(2000 * attempt);
+      continue;
+    }
     if (res.status === 429 || res.status >= 500) {
       await sleep(1000 * attempt);
       continue;

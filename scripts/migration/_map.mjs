@@ -324,12 +324,147 @@ export const TABLES = [
     links: [], // Related_Hypothesis → HYPOTHESES is out of scope for v1.
     airDerive: (row) => ({ Rule_Name: String(row.description ?? "").slice(0, 120) || "Untitled rule" }),
   },
+  // ── Phase 4 additions (owner decisions 2026-07-29): CHANGE_LOG modelled;
+  //    learning loop, audit + chat streams migrate. DOMAIN_LABELS/REGIONS
+  //    dropped (never modelled — decision recorded in migration-progress). ──
+  {
+    // Non-variation change rows — the complement of variation_order's filter.
+    key: "change_log", air: "CHANGE_LOG", model: "platConChangeLog",
+    fields: [
+      f("name", "Change_Name"), f("changeType", "Change_Type"),
+      f("description", "Description"), f("status", "Status"),
+      f("impactCost", "Impact_Cost", "num"), f("impactDays", "Impact_Schedule_Days", "num"),
+      f("dateRaised", "Date_Raised", "date"), f("dateResolved", "Date_Resolved", "date"),
+      f("raisedBy", "Raised_By"), f("notes", "Notes"),
+    ],
+    links: [
+      { pg: "jobId", air: "Job", target: "job" },
+      { pg: "phaseId", air: "Phase", target: "phase" },
+      { pg: "linkedIssueId", air: "Linked_Issue", target: "action" },
+    ],
+    airFilter: (fields) => fields.Change_Type !== "Variation",
+  },
+  {
+    // Mapping mirrors learning.ts airHypothesis(): app-only columns ride in
+    // the Evidence JSON; description prefers Summary_of_Findings.
+    key: "hypothesis", air: "HYPOTHESES", model: "platHypothesis",
+    fields: [
+      f("status", "Status"), f("sampleCount", "Evidence_Count", "num"),
+      f("confidence", "Confidence", "num"), f("reviewedAt", "Date_Closed", "date"),
+    ],
+    links: [],
+    pgDerive: (fields) => {
+      let meta = {};
+      try { meta = JSON.parse(String(fields.Evidence ?? "{}")) || {}; } catch { /* legacy */ }
+      return {
+        description: String(fields.Summary_of_Findings ?? "") || String(fields.Hypothesis_Name ?? ""),
+        dimension: String(meta.dimension ?? ""),
+        rootCausePattern: String(meta.rootCausePattern ?? ""),
+        triggerCondition: String(meta.triggerCondition ?? "") || "{}",
+        avgVariancePct: typeof meta.avgVariancePct === "number" ? meta.avgVariancePct : 0,
+      };
+    },
+    airDerive: (row) => ({
+      Hypothesis_Name: String(row.description ?? "").slice(0, 120) || "Hypothesis",
+      Summary_of_Findings: String(row.description ?? ""),
+      Evidence: JSON.stringify({
+        dimension: row.dimension, rootCausePattern: row.rootCausePattern,
+        avgVariancePct: row.avgVariancePct, triggerCondition: row.triggerCondition,
+      }),
+    }),
+  },
+  {
+    // Mapping mirrors corrections.ts emitCorrection() / learning.ts
+    // airCorrection(): first-class Spec-12 columns win; app metadata rides in
+    // the Notes JSON.
+    key: "correction", air: "CORRECTIONS", model: "platCorrection",
+    fields: [
+      f("dimension", "Field_Corrected"), f("rootCause", "Root_Cause"),
+      f("aiValueText", "AI_Output"), f("humanValueText", "Human_Correction"),
+      f("variancePct", "Variance_Percent", "num"), f("correctedBy", "Corrected_By"),
+      f("sourceModule", "Source_Module"), f("correctionDirection", "Correction_Direction"),
+    ],
+    links: [{ pg: "hypothesisId", air: "Hypothesis", target: "hypothesis" }],
+    pgDerive: (fields) => {
+      let n = {};
+      try { n = JSON.parse(String(fields.Notes ?? "{}")) || {}; } catch { /* legacy */ }
+      return {
+        entityType: String(n.entityType ?? ""),
+        context: n.context && typeof n.context === "object" ? JSON.stringify(n.context) : "{}",
+        sourceModule: String(fields.Source_Module ?? "") || String(n.sourceModule ?? ""),
+        correctionDirection: String(fields.Correction_Direction ?? "") || String(n.direction ?? ""),
+      };
+    },
+  },
+  {
+    // Mapping mirrors learning.ts snapshotIntelligence(): rich app metrics
+    // ride in the Accuracy_Summary JSON.
+    key: "intelligence_snapshot", air: "INTELLIGENCE_SNAPSHOT", model: "platIntelligenceSnapshot",
+    fields: [
+      f("capturedAt", "Snapshot_Date", "date"),
+      f("completedJobs", "Total_Jobs_Completed", "num"),
+      f("activeRules", "Total_Active_Rules", "num"),
+    ],
+    links: [],
+    pgDerive: (fields) => {
+      let m = {};
+      try { m = JSON.parse(String(fields.Accuracy_Summary ?? "{}")) || {}; } catch { /* legacy */ }
+      return {
+        accuracyRatePct: typeof m.accuracyRatePct === "number" ? m.accuracyRatePct : null,
+        autoApplyRules: typeof m.autoApplyRules === "number" ? m.autoApplyRules : 0,
+        avgConfidence: typeof m.avgConfidence === "number" ? m.avgConfidence : 0,
+        totalJobs: typeof m.totalJobs === "number" ? m.totalJobs : 0,
+        topRules: Array.isArray(m.topRules) ? JSON.stringify(m.topRules) : "[]",
+        gaps: Array.isArray(m.gaps) ? JSON.stringify(m.gaps) : "[]",
+        metrics: JSON.stringify(m ?? {}),
+        notes: String(fields.Known_Gaps ?? ""),
+      };
+    },
+  },
+  {
+    // Chat/audit history migrates (owner decision 2026-07-29). Job_Id /
+    // Session_Id are TEXT fields on the Airtable side (not record links) —
+    // `text: true` links resolve a bare id string through the same recMaps.
+    key: "chat_session", air: "CHAT_SESSIONS", model: "platChatSession",
+    fields: [
+      f("title", "Session_Title"),
+      f("startedAt", "Started_At", "date"), f("endedAt", "Ended_At", "date"),
+      f("summary", "Summary"),
+    ],
+    links: [{ pg: "jobId", air: "Job_Id", target: "job", text: true }],
+  },
+  {
+    key: "chat_message", air: "CHAT_MESSAGES", model: "platChatMessage",
+    fields: [
+      f("role", "Role"), f("content", "Content"), f("toolCalls", "Tool_Calls"),
+      f("createdAt", "Created_At", "date"),
+    ],
+    // sessionId is NOT NULL: rows whose session didn't resolve skip + log.
+    links: [{ pg: "sessionId", air: "Session_Id", target: "chat_session", text: true }],
+  },
+  {
+    // Audit trail migrates (owner decision 2026-07-29): compliance-relevant.
+    // Airtable EXECUTION_LOG is thinner than PlatExecutionLog — the app's rich
+    // columns (payload/operation/actor) are packed into Summary JSON by
+    // recordWriter's Airtable branch where present; canonical columns map 1:1.
+    key: "execution_log", air: "EXECUTION_LOG", model: "platExecutionLog",
+    fields: [
+      f("payload", "Summary"), f("targetTable", "Tables_Affected"),
+      f("status", "Status"), f("executedAt", "Date_Time", "date"),
+    ],
+    links: [],
+    pgDerive: (fields) => ({
+      operation: String(fields.Action_Type ?? "").toLowerCase().slice(0, 30),
+      actorType: String(fields.Initiated_By ?? "") === "AI" ? "ai" : String(fields.Initiated_By ?? "") === "System" ? "system" : "human",
+      actorName: String(fields.Initiated_By ?? ""),
+      result: String(fields.Log_Entry ?? ""),
+    }),
+  },
 ];
 
 // Excluded from v1, with reasons (surface these in every run's output):
 export const EXCLUDED = [
-  { air: "CASHFLOWS", reason: "PlatConCashflow is the legacy monthly shape (period/projected/actual); the Spec-12 per-transaction ledger has no PG model yet — needs a schema decision first." },
-  { air: "HYPOTHESES / CORRECTIONS / INTELLIGENCE_SNAPSHOT", reason: "written outside recordWriter; add map entries once field-name parity is confirmed." },
-  { air: "CHAT_SESSIONS / CHAT_MESSAGES / EXECUTION_LOG / PENDING_WRITES", reason: "audit/runtime streams; migrate deliberately, not by default." },
-  { air: "TEAM / control-base PLAT_*", reason: "identity + control plane; PlatCtl* mirrors exist (Phase B) but sync is a separate, cross-org concern." },
+  { air: "PENDING_WRITES", reason: "the Postgres claim registry (PlatPendingWrite) was ALWAYS authoritative — the Airtable table is a shadow; nothing to migrate." },
+  { air: "DOMAIN_LABELS / REGIONS", reason: "dropped (owner decision 2026-07-29) — never modelled in PG; vocabulary/regions are code- or config-driven post-migration." },
+  { air: "TEAM / control-base PLAT_*", reason: "control plane — migrated separately by scripts/migration/airtable-control-to-pg.mjs into the CONTROL database." },
 ];
