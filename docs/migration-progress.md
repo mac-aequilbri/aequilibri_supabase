@@ -316,7 +316,46 @@ The §2b rule 1 split, executed exactly along the db.ts guard-regex line:
   rows (no cross-DB FK). Suites already clean by slug; orphaned tenant rows
   in the shared dev DB are inert (new org ids never collide).
 
-### Stage B3 — remaining §2b split work (next)
+### Stage B3.2 — tenant resolution, provisioning, fan-out, native RLS (2026-07-29) — DONE
+- **db(ctx) resolves per-org databases** (§2b rule 2): the org's
+  `settings.tenantDatabaseUrl` (set at provisioning) flows into
+  `ctx.config`, so resolution is synchronous on the Phase D threading. No
+  URL → shared default tenant DB. `dbUnscoped(ctx)` is the ops twin.
+- **LRU-bounded per-URL client cache** (§2b rule 8): cap via
+  `TENANT_CLIENT_CAP` (default 8), eviction disconnects in the background;
+  every per-org client carries the same org-isolation guard + control-model
+  dispatch. `tenantClientCacheSize()` exposed for diagnostics.
+- **`scripts/provision-tenant-db.mjs`** (§2b topology: CREATE DATABASE +
+  migrate + seed replaces template-base cloning): creates the DB, applies the
+  full tenant migration history, applies the native RLS pin, and only with an
+  explicit `--activate` writes `tenantDatabaseUrl` into the registry.
+  Idempotent.
+- **`scripts/migrate-all-tenants.mjs`** (§2b rule 6 fan-out): control DB →
+  default tenant DB → every provisioned tenant from the registry (rule 7:
+  enumeration via registry only), fail-fast, re-pins RLS after each deploy.
+- **Native Postgres RLS** (§2b rule 4, `scripts/_tenant-rls.mjs`): each
+  tenant DB holds exactly one org, so every org_id table gets ENABLE+FORCE
+  ROW LEVEL SECURITY with a constant `org_pin` policy — no session variables.
+  Caveat: superuser/BYPASSRLS connections bypass policies (local dev does;
+  production must connect as a plain role — Phase 7 checklist item).
+- **E2E-proven locally**: scratch org `tenant-e2e` (id 30) provisioned to
+  `aequilibri_t_tenant_e2e` (12 migrations, RLS pin on 40 tables, activated);
+  a write through db(ctx) landed in the org's own DB with the shared DB at
+  zero rows for that org; fan-out covered control + default + the tenant.
+  Scratch org then deactivated (DB kept as artifact). Permanent
+  `dbSplit.test.ts` covers resolution + cache semantics + guard-on-resolved
+  clients. Suite: 40 files / 304 tests green; tsc clean; app boots and
+  serves.
+
+### Stage B4 — remaining §2b work (next)
+- **The prisma.* → db(ctx) call-site sweep** (~150 tenant call sites on the
+  Phase D threading). Until it completes, NO org may be activated onto its
+  own database (split-brain risk — documented on the seam and in the
+  provisioning script; nothing is activated today).
+- Diagnostics page: surface tenant-client cache size + per-org DB status.
+- Owner decisions pending: Uc1* placement confirmed (stays in tenant
+  schema, served by the default DB); tenant-URL encryption at rest before
+  production (PLATFORM_ENCRYPTION_KEY) — Phase 7.
 Execution order chosen so every step keeps the app green:
 
 1. **Split the Prisma schemas.** `prisma/schema.prisma` stays the TENANT

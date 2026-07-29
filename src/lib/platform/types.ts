@@ -25,6 +25,13 @@ export interface OrgConfig {
    *  records. RLS always keeps it in scope so every member sees it. Set at
    *  provisioning; absent until then (docs/archive/project-general-bucket-plan.md). */
   generalJobId?: string;
+  /** §2b: the org's own tenant-database connection string, set when its
+   *  database is provisioned (scripts/provision-tenant-db.mjs). Absent = the
+   *  org lives in the shared/default tenant DB (DATABASE_URL). Resolved by
+   *  db(ctx) in lib/db.ts. Do NOT flip this before the prisma.* → db(ctx)
+   *  call-site sweep is complete — a partial sweep splits reads/writes
+   *  across two databases. */
+  tenantDatabaseUrl?: string;
 }
 
 /** Request context every platform service takes as its first argument. */

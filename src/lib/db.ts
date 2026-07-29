@@ -62,14 +62,8 @@ function hasOrgConstraint(where: any): boolean {
   return false;
 }
 
-function makeClients() {
-  const base = new PrismaClient({
-    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-  });
-  const control = new ControlPrismaClient({
-    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-  });
-  const guarded = base.$extends({
+function guard(base: PrismaClient) {
+  return base.$extends({
     name: "org-isolation-guard",
     query: {
       $allModels: {
@@ -96,7 +90,16 @@ function makeClients() {
       },
     },
   });
-  return { base, guarded, control };
+}
+
+function makeClients() {
+  const base = new PrismaClient({
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+  });
+  const control = new ControlPrismaClient({
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+  });
+  return { base, guarded: guard(base), control };
 }
 
 type Clients = ReturnType<typeof makeClients>;
@@ -141,12 +144,75 @@ export const prisma = withControlDispatch(clients.guarded, clients.control);
  *  token resolution, seeds, ops scripts). Every use is a reviewed exception. */
 export const prismaUnscoped = withControlDispatch(clients.base, clients.control);
 
-/** §2b rule 2 — the tenant-DB resolver seam, keyed on the Phase D OrgCtx
- *  threading. Today every org lives in the default tenant DB (DATABASE_URL),
- *  so this returns the shared guarded client; when per-org tenant databases
- *  are provisioned (Phase 3 stage B3.4), this resolves the org's connection
- *  from the control registry and returns its cached client instead. New code
- *  should reach tenant data through db(ctx), not `prisma`. */
-export function db(_ctx: { orgId: number }): typeof prisma {
-  return prisma;
+// ── Per-org tenant clients (§2b rules 2 + 8) ────────────────────────────────
+// An org whose database has been provisioned carries its connection string in
+// the registry settings (ctx.config.tenantDatabaseUrl — parsed into OrgCtx by
+// org-context, so resolution here is synchronous on the Phase D threading).
+// Clients are cached per URL and LRU-bounded: Postgres connections are
+// finite, and each active tenant carries its own pool (size via the URL's
+// connection_limit param; default it deliberately low in tenant URLs).
+
+const TENANT_CLIENT_CAP = Number(process.env.TENANT_CLIENT_CAP || 8);
+
+type TenantEntry = { guarded: ReturnType<typeof guard>; base: PrismaClient; lastUsed: number };
+const tenantCache = new Map<string, TenantEntry>(); // url → clients
+
+function tenantClientFor(url: string): TenantEntry {
+  const hit = tenantCache.get(url);
+  if (hit) {
+    hit.lastUsed = Date.now();
+    return hit;
+  }
+  const base = new PrismaClient({
+    datasourceUrl: url,
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+  });
+  const entry: TenantEntry = { guarded: guard(base), base, lastUsed: Date.now() };
+  tenantCache.set(url, entry);
+  if (tenantCache.size > TENANT_CLIENT_CAP) {
+    // Evict the least-recently-used tenant; disconnect in the background so
+    // eviction never blocks the request that triggered it.
+    let lruKey: string | null = null;
+    let lruAt = Infinity;
+    for (const [k, v] of tenantCache) {
+      if (v.lastUsed < lruAt) {
+        lruAt = v.lastUsed;
+        lruKey = k;
+      }
+    }
+    if (lruKey) {
+      const evicted = tenantCache.get(lruKey)!;
+      tenantCache.delete(lruKey);
+      void evicted.base.$disconnect().catch(() => {});
+    }
+  }
+  return entry;
+}
+
+/** §2b rule 2 — the tenant-DB resolver, keyed on the Phase D OrgCtx
+ *  threading. An org with a provisioned database (config.tenantDatabaseUrl)
+ *  gets its own guarded, cached client; every other org uses the shared
+ *  default tenant DB. New code should reach tenant data through db(ctx);
+ *  the remaining `prisma.*` tenant call sites are being swept onto it.
+ *  IMPORTANT: an org must not be flipped onto its own database until that
+ *  sweep is complete — a partial sweep splits its reads/writes across two
+ *  databases. */
+export function db(ctx: { orgId: number; config?: { tenantDatabaseUrl?: string } & Record<string, unknown> }): typeof prisma {
+  const url = ctx.config?.tenantDatabaseUrl;
+  if (!url || url === process.env.DATABASE_URL) return prisma;
+  // Control-model access still routes to the single control client.
+  return withControlDispatch(tenantClientFor(url).guarded, clients.control) as typeof prisma;
+}
+
+/** Unguarded twin of db(ctx) for deliberate cross-org/ops access on a
+ *  provisioned tenant database. */
+export function dbUnscoped(ctx: { orgId: number; config?: { tenantDatabaseUrl?: string } & Record<string, unknown> }): typeof prismaUnscoped {
+  const url = ctx.config?.tenantDatabaseUrl;
+  if (!url || url === process.env.DATABASE_URL) return prismaUnscoped;
+  return withControlDispatch(tenantClientFor(url).base, clients.control) as typeof prismaUnscoped;
+}
+
+/** Cache introspection for diagnostics/tests (§2b rule 8 metrics). */
+export function tenantClientCacheSize(): number {
+  return tenantCache.size;
 }

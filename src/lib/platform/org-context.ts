@@ -63,6 +63,10 @@ function parseConfig(settingsRaw: string): OrgConfig {
     module1: settings.module1 ?? defaultModule1Governance(),
     branding: settings.branding?.logo ? { logo: settings.branding.logo } : undefined,
     generalJobId: typeof settings.generalJobId === "string" ? settings.generalJobId : undefined,
+    tenantDatabaseUrl:
+      typeof settings.tenantDatabaseUrl === "string" && settings.tenantDatabaseUrl
+        ? settings.tenantDatabaseUrl
+        : undefined,
   };
 }
 
