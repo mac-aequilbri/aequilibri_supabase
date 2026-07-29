@@ -1011,6 +1011,13 @@ model PlatActionHub {
   dueDate          DateTime? @map("due_date") @db.Date
   sourceType       String    @default("manual") @map("source_type") @db.VarChar(30)
   sourceId         Int?      @map("source_id")
+  // Spec 10/12 ISSUES classifier + links (mirrors Issue_Type/PHASES/RISKS).
+  // Added for the PG-native cascade engine (migration-plan Phase 3): rule G
+  // needs issueType+riskId for idempotent risk-materialisation issues, rule F
+  // reads phaseId. Bare Int refs like the other optional links.
+  issueType        String    @default("Open Action") @map("issue_type") @db.VarChar(50)
+  phaseId          Int?      @map("phase_id")
+  riskId           Int?      @map("risk_id")
   context          String    @default("{}")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
@@ -1290,6 +1297,9 @@ model PlatConPhase {
   endDate            DateTime? @map("end_date") @db.Date
   isAiDraft          Boolean   @default(false) @map("is_ai_draft")
   approvedBy         String    @default("") @map("approved_by") @db.VarChar(200)
+  // Spec 12 Module 5 RAG health signal (mirrors PHASES.RAG). Added for the
+  // PG-native cascade engine (rule F floors it at Amber on Blocker issues).
+  rag                String    @default("") @db.VarChar(10)
   // AI-suggested completion from site evidence (JSON annotation). Never
   // applied to completionPct directly — a human approves/adjusts/dismisses.
   evidenceSuggestion String    @default("{}") @map("evidence_suggestion")

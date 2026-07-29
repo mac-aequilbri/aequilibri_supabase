@@ -67,7 +67,7 @@ export const TABLES = [
       f("name", "Phase_Name"), f("status", "Status"),
       f("completionPct", "Completion_Pct", "num"), f("sortOrder", "Sort_Order", "num"),
       f("isAiDraft", "Is_AI_Draft", "bool"), f("approvedBy", "Approved_By"),
-      // PHASES.RAG is pgOmit'd (no PG column) — Airtable-only, dropped toward PG.
+      f("rag", "RAG"),
     ],
     links: [{ pg: "jobId", air: "Job", target: "job" }],
   },
@@ -124,9 +124,14 @@ export const TABLES = [
       f("status", "Status", "str", { statusMap: "action" }),
       f("priority", "Priority", "str", { statusMap: "actionPriority" }),
       f("dueDate", "Due_Date", "date"),
-      // ISSUES.Issue_Type + RISKS link are pgOmit'd — Airtable-only.
+      f("issueType", "Issue_Type"),
+      // PG phaseId has no ISSUES home (canonical ISSUES carries no Phase
+      // link) — lossy toward Air.
     ],
-    links: [{ pg: "jobId", air: "Job", target: "job" }],
+    links: [
+      { pg: "jobId", air: "Job", target: "job" },
+      { pg: "riskId", air: "RISKS", target: "risk" },
+    ],
     // owner rides in Notes as "Owner: <name>" (fieldMaps convention).
     airDerive: (row) =>
       row.owner && String(row.owner).trim() ? { Notes: `Owner: ${String(row.owner).trim()}` } : {},

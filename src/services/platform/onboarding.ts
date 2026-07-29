@@ -435,6 +435,23 @@ export async function provisionOrganisation(input: ProvisionInput): Promise<Prov
       });
     }
 
+    // Spec 12 Module 5 cascade rules (lock decision D-4), mirroring the
+    // Airtable-control branch: advisories seed Active, write-effect rules
+    // seed as Drafts the owner activates in the learning UI.
+    await tx.platLearningRule.createMany({
+      data: CASCADE_RULE_SEEDS.map((seed) => ({
+        orgId: org.id,
+        ruleCode: seed.ruleCode,
+        kind: "guidance",
+        description: seed.description,
+        triggerCondition: seed.triggerCondition,
+        confidence: 80,
+        isActive: seed.isActive,
+        overrideLevel: "owner_only",
+        dateActivated: seed.isActive ? new Date() : null,
+      })),
+    });
+
     await tx.platExecutionLog.create({
       data: {
         orgId: org.id,

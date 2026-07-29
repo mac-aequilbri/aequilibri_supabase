@@ -20,9 +20,8 @@ export async function register() {
   if (!airtableOn) {
     warn(
       "AIRTABLE_MIGRATION is off — all reads/writes use Postgres (orgs cannot opt back " +
-        "into Airtable per-org). Control plane is served from Postgres " +
-        "(PlatCtl* + PlatOrganisation; migration-plan Phase 3). " +
-        "Cascade write-effects/advisories do not fire yet (engine is Airtable-gated).",
+        "into Airtable per-org). Control plane and the cascade engine are served " +
+        "from Postgres (migration-plan Phase 3).",
     );
     return;
   }

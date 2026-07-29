@@ -255,9 +255,9 @@ const phaseSchema = z.object({
   isAiDraft: bool.default(false),
   approvedBy: str(200).default(""),
   evidenceSuggestion: jsonStr.default("{}"),
-  // Spec 12 Module 5: RAG health signal. Airtable-only (pgOmit strips it before
-  // the Postgres delegate, which has no rag column) — Airtable is system of
-  // record for phase RAG. Empty/absent is never written (fieldMap presence-gate).
+  // Spec 12 Module 5: RAG health signal (PG column added for the cascade
+  // engine port; Airtable mirrors via PHASES.RAG). Empty/absent is never
+  // written on the Airtable plane (fieldMap presence-gate).
   rag: str(10).default(""),
 });
 
@@ -439,7 +439,7 @@ const REGISTRY = {
   job: { physical: "plat_core_job", delegate: d(prisma.platJob), create: jobSchema, update: upd(jobSchema) },
   contact: { physical: "plat_core_contact", delegate: d(prisma.platContact), create: contactSchema, update: upd(contactSchema) },
   workstream: { physical: "plat_core_workstream", delegate: d(prisma.platWorkstream), create: workstreamSchema, update: upd(workstreamSchema) },
-  action: { physical: "plat_core_actionhub", delegate: d(prisma.platActionHub), pgOmit: ["issueType", "phaseId", "riskId"], create: actionSchema, update: upd(actionSchema) },
+  action: { physical: "plat_core_actionhub", delegate: d(prisma.platActionHub), create: actionSchema, update: upd(actionSchema) },
   decision: { physical: "plat_core_decision", delegate: d(prisma.platDecision), create: decisionSchema, update: upd(decisionSchema) },
   // Phase D: comms/plan gained Postgres mirrors (PlatComms/PlatConPlanTask,
   // Phase B) — the zod keys match the model columns 1:1, so the standard
@@ -448,7 +448,7 @@ const REGISTRY = {
   plan: { physical: "PLAN", delegate: d(prisma.platConPlanTask), create: planSchema, update: upd(planSchema) },
   learning_rule: { physical: "plat_core_learningrule", delegate: d(prisma.platLearningRule), create: learningRuleSchema, update: upd(learningRuleSchema) },
   document: { physical: "plat_core_document", delegate: d(prisma.platDocument), create: documentSchema, update: upd(documentSchema) },
-  phase: { physical: "plat_con_phase", delegate: d(prisma.platConPhase), pgOmit: ["rag"], create: phaseSchema, update: upd(phaseSchema) },
+  phase: { physical: "plat_con_phase", delegate: d(prisma.platConPhase), create: phaseSchema, update: upd(phaseSchema) },
   phase_evidence: { physical: "plat_con_phaseevidence", delegate: d(prisma.platConPhaseEvidence), create: phaseEvidenceSchema, update: upd(phaseEvidenceSchema) },
   budget_line: { physical: "plat_con_budgetline", delegate: d(prisma.platConBudgetLine), create: budgetLineSchema, update: upd(budgetLineSchema) },
   cashflow: { physical: "plat_con_cashflowledger", delegate: d(prisma.platConCashflowLedger), create: cashflowSchema, update: upd(cashflowSchema) },

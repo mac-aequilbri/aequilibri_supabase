@@ -1079,6 +1079,18 @@ async function writeRuleLadder(
   state: { window: boolean[]; level: OverrideLevel; demoted: boolean },
 ): Promise<void> {
   try {
+    if (!airtableEnabled(ctx)) {
+      const id = Number(ruleId);
+      if (!Number.isInteger(id)) return;
+      await prisma.platLearningRule.update({
+        where: { id },
+        data: {
+          applicationWindow: serializeApplicationWindow(state.window),
+          ...(state.demoted ? { overrideLevel: state.level } : {}),
+        },
+      });
+      return;
+    }
     await core.update(ctx.orgSlug, "LEARNING_RULES", ruleId, {
       Application_Window: serializeApplicationWindow(state.window),
       ...(state.demoted ? { Override_Level: overrideLevelOption(state.level) } : {}),
@@ -1096,8 +1108,13 @@ export async function setRuleOverrideLevel(
   ruleId: string,
   level: OverrideLevel,
 ): Promise<void> {
-  if (!airtableEnabled(ctx)) return;
   try {
+    if (!airtableEnabled(ctx)) {
+      const id = Number(ruleId);
+      if (!Number.isInteger(id)) return;
+      await prisma.platLearningRule.update({ where: { id }, data: { overrideLevel: level } });
+      return;
+    }
     await core.update(ctx.orgSlug, "LEARNING_RULES", ruleId, {
       Override_Level: overrideLevelOption(level),
     });
@@ -1109,9 +1126,22 @@ export async function setRuleOverrideLevel(
 /** Targeted rule-firing bookkeeping for the cascade engine: bump exactly ONE
  *  rule by code (Times_Triggered/Last_Triggered/confidence+1/ladder), without
  *  applyRules' context matching — an empty Trigger_Context matches everything
- *  there, which would fire unrelated rules. Airtable-only (cascades are). */
+ *  there, which would fire unrelated rules. Dual-store (cascade engine runs on
+ *  both since migration-plan Phase 3; PG has no Last_Triggered column). */
 export async function markRuleApplied(ctx: OrgCtx, rule: RuleRow): Promise<void> {
-  if (!airtableEnabled(ctx)) return;
+  if (!airtableEnabled(ctx)) {
+    const id = Number(rule.id);
+    if (!Number.isInteger(id)) return;
+    await prisma.platLearningRule.update({
+      where: { id },
+      data: {
+        timesTriggered: rule.timesTriggered + 1,
+        confidence: Math.min(RULE_CONFIDENCE_MAX, rule.confidence + 1),
+      },
+    });
+    await writeRuleLadder(ctx, rule.id, ladderAfterEvent(rule.overrideLevel, rule.applicationWindow, true));
+    return;
+  }
   await core.update(ctx.orgSlug, "LEARNING_RULES", rule.id, {
     Times_Triggered: rule.timesTriggered + 1,
     Last_Triggered: new Date().toISOString().slice(0, 10),

@@ -252,12 +252,29 @@ Airtable-only; integrations page renders. tsc clean; vitest 38 files /
 295 tests green (8 new controlPlane round-trip tests incl. RLS scoping via
 PlatCtlAssignment, fail-open→scoped→cleared).
 
-### Stage B — remaining Phase 3 work
-1. **Cascade engine un-gate** (plan §3.8, found in Phase 2).
-2. **§2b physical split**: control Prisma schema + separate control DB,
-   `db(ctx)` tenant resolver, native RLS in tenant DBs, migrate fan-out
-   script, composite `(orgId, airtableRecordId)` fix across the 37 bridged
-   models.
+### Stage B1 — cascade engine on Postgres (2026-07-29) — DONE (plan §3.8)
+- `runCascades` un-gated; rules D/F/G, advisories (record/load/dismiss) and
+  `seedCascadeRules` are dual-store; `markRuleApplied`/`writeRuleLadder`/
+  `setRuleOverrideLevel` gained PG branches (PG has no Last_Triggered column —
+  accepted lossy).
+- **Schema additions** the rules needed (`20260729200000_cascade_pg_fields`):
+  `PlatActionHub.issueType/phaseId/riskId` and `PlatConPhase.rag` — these were
+  `pgOmit` shims ("Airtable is system of record") that had to become real
+  columns in a PG-native build. pgOmit removed from the action/phase registry
+  entries; mover map now carries Issue_Type, the ISSUES→RISKS link and
+  PHASES.RAG (action.phaseId stays PG-only — canonical ISSUES has no Phase
+  link).
+- Onboarding's PG transaction now seeds the 7 cascade rules (advisories
+  Active, write rules Draft, owner_only), matching the Airtable branch.
+- New `cascadePg.test.ts` (6 E2E tests through writeRecord's post-write hook):
+  seeding idempotency, D upsert+re-fire, G create-once, F RAG floor,
+  advisory lifecycle, bookkeeping. Suite: 39 files / 301 tests green.
+
+### Stage B2 — remaining Phase 3 work
+**§2b physical split**: control Prisma schema + separate control DB,
+`db(ctx)` tenant resolver, native RLS in tenant DBs, migrate fan-out
+script, composite `(orgId, airtableRecordId)` fix across the 37 bridged
+models.
 
 ### Notes / gotchas
 - `templates/actions.ts` is UTF-16-encoded on disk (grep sees it as binary) —

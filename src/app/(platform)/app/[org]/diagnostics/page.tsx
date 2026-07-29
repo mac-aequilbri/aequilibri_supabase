@@ -39,7 +39,6 @@ const POSTGRES_BY_DESIGN = [
 
 // The inverse asymmetry: these only work with AIRTABLE_MIGRATION on.
 const AIRTABLE_ONLY = [
-  "Cascade write-effects + advisories (runCascades is Airtable-gated)",
   "Schema drift checks + base provisioning (inherently Airtable concerns)",
 ];
 
