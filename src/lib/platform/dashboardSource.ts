@@ -139,15 +139,18 @@ async function fromAirtable(ctx: OrgCtx): Promise<DashboardView> {
   };
 
   // Spec 12 CASHFLOWS is a per-transaction ledger; derive the period
-  // projected-vs-actual chart from it — Paid rows are actual, the rest projected.
+  // projected-vs-actual chart from it — Paid rows are actual, the rest
+  // projected. Amounts are signed by direction (Out subtracts) so the chart
+  // shows net cash position — same convention as the cashflow window (the
+  // 2026-07-20 "cashflow net math" Critical; this branch had been missed).
   const byPeriod = new Map<string, { projected: number; actual: number }>();
   for (const c of cashflows) {
     const period = str(c["Period"]);
     if (!period) continue;
     const agg = byPeriod.get(period) ?? { projected: 0, actual: 0 };
-    const amount = num(c["Amount"]);
-    if (str(c["Status"]) === "Paid") agg.actual += amount;
-    else agg.projected += amount;
+    const signed = str(c["Type"]) === "Out" ? -num(c["Amount"]) : num(c["Amount"]);
+    if (str(c["Status"]) === "Paid") agg.actual += signed;
+    else agg.projected += signed;
     byPeriod.set(period, agg);
   }
 
@@ -207,17 +210,20 @@ async function fromPostgres(ctx: OrgCtx): Promise<DashboardView> {
       prisma.platLearningRule.count({ where: { orgId: ctx.orgId, isActive: true } }),
     ]);
 
-  // Legacy shape: cashflow writes are Airtable-only (Spec 12 ledger), so this
-  // only ever renders pre-migration/seeded projected-vs-actual rows.
-  const cashflows = await prisma.platConCashflow.findMany({
+  // Spec 12 ledger (PlatConCashflowLedger, migration-plan Phase 2): Paid rows
+  // are actual, the rest projected; amounts signed by direction (Out
+  // subtracts) so the chart shows net cash position, matching the cashflow
+  // window and the Airtable branch above.
+  const cashflows = await prisma.platConCashflowLedger.findMany({
     where: { orgId: ctx.orgId, ...jobW },
-    select: { period: true, projected: true, actual: true },
+    select: { period: true, type: true, amount: true, status: true },
   });
   const byPeriod = new Map<string, { projected: number; actual: number }>();
   for (const c of cashflows) {
     const agg = byPeriod.get(c.period) ?? { projected: 0, actual: 0 };
-    agg.projected += toNum(c.projected);
-    agg.actual += toNum(c.actual);
+    const signed = c.type === "Out" ? -toNum(c.amount) : toNum(c.amount);
+    if (c.status === "Paid") agg.actual += signed;
+    else agg.projected += signed;
     byPeriod.set(c.period, agg);
   }
 

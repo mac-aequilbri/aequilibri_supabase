@@ -41,62 +41,58 @@ A backend-switch audit ran 2026-07-28 (report: `docs/airtable-postgres-switch-au
 
 ---
 
-## 2b. Tenancy architecture (owner decision 2026-07-29): database per client
+## 2b. Tenancy architecture (owner decision): database per client
 
-> This section was missing from the original plan (the owner's rules of
-> engagement referenced it before it existed). The **decision is the owner's**:
-> one Postgres database per client org. The 8 design rules below were drafted
-> by the executing session on 2026-07-29 to make that decision implementable
-> and are open to owner veto/amendment; they are treated as constraints from
-> Phase 2 onward.
+> Owner-supplied section (2026-07-29; replaces an interim draft by the
+> executing session). The 8 design rules are constraints, not suggestions,
+> from Phase 2 onward.
 
-Rationale: hard tenant isolation for the compliance driver, per-client
-residency/backup/restore/offboarding (drop the DB, hand over a dump), and
-blast-radius containment — a bug or bad migration in one client's DB cannot
-touch another's.
+**Airtable→Postgres topology mapping.** The Postgres deployment mirrors the
+Airtable topology rather than flattening it:
 
-**Design rules:**
+| Airtable (today) | Postgres (target) |
+|---|---|
+| Control base (`PLAT_*` tables) | **Control DB** (org registry, team, assignments, outbox, catalogs, cascades) |
+| One base per client org | **One tenant DB per org** |
+| Template-base cloning at onboarding | `CREATE DATABASE` + `migrate deploy` + seed |
 
-1. **Two schema domains, cleanly split.** One **control** database holds the
-   platform control plane (org registry, team, RLS assignments, outbox,
-   catalogs, cascades — the `PlatCtl*` models). N **tenant** databases hold all
-   client/domain data (the other `Plat*` models). No table lives in both; no
-   cross-database foreign keys.
-2. **The control DB's org registry is the single source of tenant-DB routing**
-   (orgId → tenant `DATABASE_URL`). Per-tenant connection strings are data,
-   not env vars (env carries only the control DB URL and the credentials
-   scheme); stored secrets are encrypted at rest with `PLATFORM_ENCRYPTION_KEY`.
-3. **Exactly one connection factory.** All tenant DB access goes through a
-   single module that resolves org → cached PrismaClient. No call site
-   constructs its own client/URL. (This is the control-plane repository-layer
-   principle from Phase 3 applied to connections — no 180-site inline branching
-   again.)
-4. **One tenant schema, one migration history, zero drift.** Every tenant DB
-   runs the identical Prisma schema and full migration history. Provisioning a
-   client = create DB → `migrate deploy` → seed. Schema changes roll out to
-   every tenant DB or none; a tenant DB with divergent schema is a defect, not
-   a feature (Airtable's per-base field drift does NOT get re-created in PG).
-5. **The control DB gets its own Prisma schema + migration history**, separate
-   from the tenant schema, so control-plane and tenant migrations can ship
-   independently and a tenant dump never contains control-plane rows.
-6. **Keep `orgId` scoping as defense-in-depth.** Tenant rows keep their
-   `orgId` column and the existing org-isolation guard/RBAC seams stay active,
-   even though a tenant DB only ever contains one org. Wrong-DB wiring bugs
-   must hit a second, independent wall. The existing isolation regression
-   tests must keep passing unchanged.
-7. **Bounded connection hygiene.** The client cache is LRU-bounded with
-   explicit disposal (Postgres connections are finite; dev HMR and tests must
-   not leak pools). One PrismaClient per active tenant, hard cap, metrics on
-   evictions.
-8. **Cross-tenant operations enumerate via the registry only.** Platform-admin
-   views, diagnostics, movers, reconciliation and backups iterate orgs from
-   the control DB and connect per-tenant through the factory — never SQL
-   across tenant DBs, never a hand-maintained list of connection strings.
+**Design rules (all 8 mandatory):**
 
-Consequences worth noting up front: local dev runs N+1 databases on one
-Postgres instance (cheap — same cluster, separate databases); Phase 3 grows a
-"provision tenant DB" step; the movers gain a per-org target-DB parameter;
-`docs`/env-var documentation must describe the control-DB-URL-only environment.
+1. **Split the Prisma clients along the existing `db.ts` guard-regex line.**
+   `db.ts` already partitions the model namespace with
+   `/^Plat(?!Organisation$|Ctl)/` — models matching it are tenant-scoped;
+   `PlatOrganisation` and `PlatCtl*` are control-plane. That line becomes the
+   physical split: control schema → control DB, tenant schema → tenant DBs.
+2. **Build the `db(ctx)` resolver on the Phase D ctx threading.** ~150 call
+   sites already receive an `OrgCtx`; the tenant-client resolver keys off that
+   same ctx (org → cached PrismaClient) instead of introducing a new
+   parameter-passing scheme.
+3. **Keep `orgId` columns as a tripwire.** Tenant tables keep `orgId` and the
+   org-isolation guard stays active even though each tenant DB holds one org —
+   wrong-DB wiring bugs must hit a second, independent wall. Existing
+   isolation regression tests keep passing unchanged.
+4. **Enable native Postgres RLS inside each tenant DB** as hard enforcement
+   beneath the application guard.
+5. **Fix `airtableRecordId` uniqueness to `(orgId, airtableRecordId)`.** The
+   Phase B bridge made it globally `@unique` per table; Airtable rec-ids are
+   only meaningful per base, and shared staging/dev DBs hold multiple orgs.
+   Composite uniqueness from here on (new models get it from day one).
+6. **Build the migrate-fan-out script.** Schema changes apply to every tenant
+   DB + control DB in one operation; a tenant DB with divergent schema is a
+   defect. (Airtable's per-base field drift does NOT get re-created in PG.)
+7. **Accept that cross-tenant SQL is impossible.** Any feature that would
+   join/aggregate across orgs in one query must be redesigned as per-tenant
+   queries composed in application code (platform-admin views, diagnostics,
+   movers, reconciliation, backups iterate orgs via the control DB registry).
+8. **Plan for pool growth.** Each active tenant DB carries its own connection
+   pool; cap pool size per tenant, bound/dispose cached clients, and budget
+   connections as tenant count grows.
+
+**Client-facing consequence to raise before cutover:** Didi currently has
+direct access to their Airtable base; after migration there is no equivalent
+"open the database" surface. That conversation (what replaces direct base
+access — portal, exports, read-only reporting) must happen with the client
+before cutover, not after.
 
 ---
 
@@ -154,6 +150,7 @@ The 8 `PlatCtl*` mirror models exist but nothing uses them. This phase makes the
 5. **Catalogs**: `PLAT_JOB_CATALOG` (per-vertical job categories, data-driven since July), engagement-type config, cascades (CASCADE-A..G advisory records seeded on live orgs).
 6. Approach: introduce a thin control-plane repository layer rather than branching inline at each call site (the audit's main structural criticism was 180 inline branches — don't repeat it for the control plane).
 7. Seed script for a fresh PG control plane (orgs, team, catalogs) so dev/staging can boot without any Airtable export.
+8. *(Added 2026-07-29, found in Phase 2)* **Un-gate the cascade engine in PG mode.** `runCascades()` returns immediately unless `airtableEnabled(ctx)` — no cascade write-effects (D: procurement→cashflow, F: blocker→phase RAG, G: risk→issue) or advisories fire in PG mode. The rules' `execute` functions and `recordAdvisory`/`markRuleApplied` are `core.*`-coupled and gate on `rec…` ids throughout. PG models exist for everything they touch (learning rules, EXECUTION_LOG, ledger, phases, issues), so this is a port, not a redesign — but it must come before cutover or standing automation silently disappears.
 
 **Exit criteria:** app boots and operates with `AIRTABLE_CONTROL_BASE_ID` unset; boot guard no longer references the control base.
 

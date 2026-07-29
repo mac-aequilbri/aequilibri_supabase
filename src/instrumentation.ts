@@ -20,8 +20,9 @@ export async function register() {
   if (!airtableOn) {
     warn(
       "AIRTABLE_MIGRATION is off — all reads/writes use Postgres (orgs cannot opt back " +
-        "into Airtable per-org). CASHFLOWS has no Postgres model: writes to it will throw. " +
-        "Control-plane features (assignments, connections, outbox, catalogs) are unavailable.",
+        "into Airtable per-org). " +
+        "Control-plane features (assignments, connections, outbox, catalogs) are unavailable, " +
+        "and cascade write-effects/advisories do not fire (engine is Airtable-gated).",
     );
     return;
   }

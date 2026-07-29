@@ -130,6 +130,74 @@ what was done, deviations from the plan and why, and plan errata.
 - Cashflow window in PG mode currently renders an empty list via the legacy
   read path — Phase 2 replaces this with the Spec-12 ledger model.
 
+---
+
+## Phase 2 — Cashflow ledger model (started 2026-07-29)
+
+### §2b received
+Owner supplied the authoritative §2b (database-per-client) on 2026-07-29 —
+now transcribed into the plan doc, replacing this session's interim draft.
+Immediately applicable here: **rule 5** (composite `(orgId, airtableRecordId)`
+uniqueness) shapes the new ledger model from day one; rules 1–2 (db.ts
+guard-regex split, `db(ctx)` resolver) land in Phase 3.
+
+### Done (2026-07-29) — COMPLETE
+1. **`PlatConCashflowLedger` model** (Spec-12 per-transaction shape, columns
+   1:1 with `cashflowSchema`), with `@@unique([orgId, airtableRecordId])` per
+   §2b rule 5 — the first model with composite bridge uniqueness. Migration
+   `20260729100000_cashflow_ledger` (generated via `migrate diff`, applied).
+   Legacy `PlatConCashflow` kept unwired for pre-ledger dev data, per plan.
+2. **Write delegate wired** in `recordWriter.ts` (`d(prisma.platConCashflowLedger)`)
+   — form create, edit save, assistant writes and proposals all route through
+   the standard delegate branch now.
+3. **Reads switched to the ledger**: `cashflowSource.fromPostgres` (list
+   window), `loadCashflowDetail` PG branch (edit form), `dashboardSource`
+   PG chart, `jobContextSource` PG rollup (AI job context).
+4. **Chart math cross-checked (plan §2.5):** the 2026-07-20 "cashflow net
+   math" Critical was fixed in the window but NOT in the dashboard/job-context
+   aggregations — they summed In+Out unsigned. All aggregation sites now use
+   the window's signed-net convention (Out subtracts; Paid=actual, else
+   projected). Fixed in both PG and Airtable branches for cross-backend
+   consistency.
+5. **Mover map**: `cashflow` entry added to `_map.mjs` (CASHFLOWS →
+   platConCashflowLedger; status passes through untranslated so live-base
+   drift surfaces in Phase 5 reconciliation; rows without a Job link skip+log
+   because `jobId` is NOT NULL).
+6. **Boot guard / diagnostics / config comments** updated: CASHFLOWS no longer
+   an asymmetry; replaced with the cascade-engine gap (below).
+7. **Tests**: new `cashflowLedger.test.ts` (create+audit, zod period
+   validation, update, PG detail read, cross-org refusal). Suite 287/287
+   green; tsc clean.
+8. **Verified in the browser** with 7 seeded ledger rows on `demo-walk`:
+   list window renders per-job ledger + trend chart; metric cards exact
+   (In $195,000 / Out $115,500 / Net $79,500); detail edit form loads a row;
+   dashboard Projected/Actual chart driven by the ledger across 4 periods.
+
+### Found during Phase 2 (plan updated)
+- **Cascade engine is entirely Airtable-gated** (`runCascades` early-returns
+  unless `airtableEnabled(ctx)`; rules D/F/G + advisories are `core.*`-coupled
+  and gate on `rec…` ids). No standing automation fires in PG mode. Added as
+  Phase 3 item 8 in the plan — port, not redesign (PG models exist for
+  everything the rules touch). Cashflow's cascade D therefore doesn't fire in
+  PG mode yet; the ledger write path itself is proven by tests.
+- `MASTER_IMPLEMENTATION_GUIDE.md` is at repo root, not `docs/` (plan §Phase 2.1
+  says "see docs/").
+- fieldMaps CASHFLOWS `createDefault: "Scheduled"` for Status conflicts with
+  the app enum (Forecast/Confirmed/Paid/Overdue) — unreachable in practice
+  (zod defaults Status before fieldMaps sees it); reconcile during Phase 5.
+
+### Environment notes
+- A dev server that survives a Prisma regenerate keeps the OLD client in
+  memory (Unknown field errors) — always restart the dev server after
+  `prisma generate`.
+- A partially-wedged dev server 404'd every dynamic `[id]` route while list
+  routes worked; restart fixed it (variant of the plan's wedged-server gotcha).
+- One OOM crash left `.next/dev/types/validator.ts` torn mid-write → tsc
+  errors; delete the file, Next regenerates it.
+- Zombie node processes accumulate from Turbopack crashes on this box and can
+  squat port 3000 / the Next dev lock / the Prisma DLL. A machine reboot would
+  clear the herd; until then, kill by PID via the `.next/dev/lock` file.
+
 ### Setup notes
 - Route walk runs in **demo mode** (Clerk keys temporarily commented out of
   `.env`): the walk needs an operator session, demo mode is

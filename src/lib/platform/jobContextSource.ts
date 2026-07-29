@@ -88,7 +88,7 @@ async function fromPostgres(ctx: OrgCtx, jobId: RecordId): Promise<JobContext | 
       conPhases: { where: { isAiDraft: false }, orderBy: { sortOrder: "asc" } },
       conRisks: { where: { status: "open" } },
       conBudgets: { orderBy: { category: "asc" } },
-      conCashflows: { orderBy: { period: "desc" }, take: 3 },
+      conCashflowLedger: { orderBy: { period: "desc" }, take: 200 },
       actions: { where: { status: { in: ["open", "in_progress"] } }, take: 10 },
       conVariations: { where: { status: { in: ["submitted", "approved"] } }, take: 5 },
       clientContact: { select: { name: true } },
@@ -111,11 +111,22 @@ async function fromPostgres(ctx: OrgCtx, jobId: RecordId): Promise<JobContext | 
       actualAmount: toNum(b.actualAmount),
     })),
     risks: job.conRisks.map((r) => ({ description: r.description, likelihood: r.likelihood, impact: r.impact })),
-    cashflow: job.conCashflows.map((c) => ({
-      period: c.period,
-      projected: toNum(c.projected),
-      actual: toNum(c.actual),
-    })),
+    // Ledger txns rolled up per period (Paid = actual, else projected; Out
+    // subtracts — net position), latest 3 periods, matching the Airtable branch.
+    cashflow: (() => {
+      const byPeriod = new Map<string, { projected: number; actual: number }>();
+      for (const c of job.conCashflowLedger) {
+        const agg = byPeriod.get(c.period) ?? { projected: 0, actual: 0 };
+        const signed = c.type === "Out" ? -toNum(c.amount) : toNum(c.amount);
+        if (c.status === "Paid") agg.actual += signed;
+        else agg.projected += signed;
+        byPeriod.set(c.period, agg);
+      }
+      return [...byPeriod.entries()]
+        .sort(([a], [b]) => b.localeCompare(a))
+        .slice(0, 3)
+        .map(([period, v]) => ({ period, projected: v.projected, actual: v.actual }));
+    })(),
     actions: job.actions.map((a) => ({ title: a.title, owner: a.owner, dueDate: a.dueDate })),
     variations: job.conVariations.map((v) => ({
       refNumber: v.refNumber,
@@ -196,16 +207,17 @@ async function fromAirtable(ctx: OrgCtx, jobId: RecordId): Promise<JobContext | 
     }));
 
   // Spec 12 CASHFLOWS is a per-transaction ledger; roll the job's rows up into
-  // a projected-vs-actual-per-period summary for the AI context (Paid = actual).
+  // a projected-vs-actual-per-period summary for the AI context (Paid =
+  // actual; Out subtracts — net position, the cashflow-window convention).
   const cfByPeriod = new Map<string, { projected: number; actual: number }>();
   for (const c of cashflowRows) {
     if (!linksTo(c["Job"], id)) continue;
     const period = str(c["Period"]);
     if (!period) continue;
     const agg = cfByPeriod.get(period) ?? { projected: 0, actual: 0 };
-    const amount = num(c["Amount"]);
-    if (str(c["Status"]) === "Paid") agg.actual += amount;
-    else agg.projected += amount;
+    const signed = str(c["Type"]) === "Out" ? -num(c["Amount"]) : num(c["Amount"]);
+    if (str(c["Status"]) === "Paid") agg.actual += signed;
+    else agg.projected += signed;
     cfByPeriod.set(period, agg);
   }
   const cashflow: JobContextCashflow[] = [...cfByPeriod.entries()]

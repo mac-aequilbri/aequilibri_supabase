@@ -806,6 +806,7 @@ model PlatOrganisation {
   conPhases                 PlatConPhase[]
   conBudgetLines            PlatConBudgetLine[]
   conCashflows              PlatConCashflow[]
+  conCashflowLedger         PlatConCashflowLedger[]
   conRisks                  PlatConRisk[]
   conVariations             PlatConVariationOrder[]
   conVendors                PlatConVendor[]
@@ -954,6 +955,7 @@ model PlatJob {
   conPhases        PlatConPhase[]
   conBudgets       PlatConBudgetLine[]
   conCashflows     PlatConCashflow[]
+  conCashflowLedger PlatConCashflowLedger[]
   conRisks         PlatConRisk[]
   conVariations    PlatConVariationOrder[]
   conProcurement   PlatConProcurement[]
@@ -1369,6 +1371,39 @@ model PlatConCashflow {
 
   @@index([jobId, period])
   @@map("plat_con_cashflow")
+}
+
+// CASHFLOWS (Spec 12) — per-transaction ledger, the Postgres system of record
+// for the cashflow window (migration-plan Phase 2). Replaces the legacy
+// monthly-shaped PlatConCashflow above, which stays unwired (kept read-only
+// for pre-ledger dev data). Column names match cashflowSchema in
+// recordWriter.ts 1:1 (the delegate-branch invariant).
+// airtableRecordId uniqueness is composite with orgId per tenancy rule §2b.5 —
+// Airtable rec-ids are only meaningful per base, and shared staging/dev DBs
+// hold multiple orgs.
+model PlatConCashflowLedger {
+  id               Int      @id @default(autoincrement())
+  airtableRecordId String?  @map("airtable_record_id") @db.VarChar(20)
+  orgId            Int      @map("org_id")
+  jobId            Int      @map("job_id")
+  name             String   @default("") @db.VarChar(200)
+  period           String   @db.VarChar(7)
+  type             String   @default("Out") @db.VarChar(3)
+  amount           Decimal  @default(0) @db.Decimal(14, 2)
+  sourceOrPayee    String   @default("") @map("source_or_payee") @db.VarChar(200)
+  category         String   @default("") @db.VarChar(100)
+  status           String   @default("Forecast") @db.VarChar(20)
+  notes            String   @default("")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, airtableRecordId])
+  @@index([orgId, status])
+  @@index([jobId, period])
+  @@map("plat_con_cashflowledger")
 }
 
 model PlatConRisk {

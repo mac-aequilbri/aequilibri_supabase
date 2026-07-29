@@ -279,10 +279,10 @@ const budgetLineSchema = z.object({
   actualAmount: num.default(0),
 });
 
-// CASHFLOWS (Spec 12) — per-transaction ledger. Airtable-only: the Prisma
-// PlatConCashflow model still carries the legacy projected/actual-per-period
-// columns and is kept read-only for legacy dev data, so there is no Postgres
-// write delegate (a Postgres-mode write fails fast, like COMMS).
+// CASHFLOWS (Spec 12) — per-transaction ledger. Postgres writes land in
+// PlatConCashflowLedger (migration-plan Phase 2); the legacy monthly-shaped
+// PlatConCashflow stays unwired, read-only for pre-ledger dev data. Keys
+// match the ledger model columns 1:1 (delegate-branch invariant).
 const cashflowSchema = z.object({
   jobId: id,
   name: str(200).default(""),
@@ -451,7 +451,7 @@ const REGISTRY = {
   phase: { physical: "plat_con_phase", delegate: d(prisma.platConPhase), pgOmit: ["rag"], create: phaseSchema, update: upd(phaseSchema) },
   phase_evidence: { physical: "plat_con_phaseevidence", delegate: d(prisma.platConPhaseEvidence), create: phaseEvidenceSchema, update: upd(phaseEvidenceSchema) },
   budget_line: { physical: "plat_con_budgetline", delegate: d(prisma.platConBudgetLine), create: budgetLineSchema, update: upd(budgetLineSchema) },
-  cashflow: { physical: "CASHFLOWS", create: cashflowSchema, update: upd(cashflowSchema) },
+  cashflow: { physical: "plat_con_cashflowledger", delegate: d(prisma.platConCashflowLedger), create: cashflowSchema, update: upd(cashflowSchema) },
   risk: { physical: "plat_con_risk", delegate: d(prisma.platConRisk), create: riskSchema, update: upd(riskSchema) },
   variation_order: { physical: "plat_con_variationorder", delegate: d(prisma.platConVariationOrder), create: variationSchema, update: upd(variationSchema) },
   vendor: { physical: "plat_con_vendor", delegate: d(prisma.platConVendor), create: vendorSchema, update: upd(vendorSchema) },

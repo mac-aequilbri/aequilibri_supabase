@@ -48,8 +48,9 @@ export function templateBaseIdForVertical(vertical: string): string {
  *  Scope honesty (see docs/airtable-postgres-switch-audit.md): this is a
  *  PROCESS-WIDE, ONE-WAY migration lever, not a per-org backend selector.
  *  Flipping it moves every org at once, and the two backends are not
- *  feature-equivalent — off: COMMS/PLAN/CASHFLOWS writes throw (no Postgres
- *  model) and the control plane is unavailable; on: Postgres remains a hard
+ *  feature-equivalent — off: the control plane is unavailable and cascade
+ *  write-effects don't fire (COMMS/PLAN/CASHFLOWS gained Postgres models in
+ *  Phases D and migration-plan Phase 2); on: Postgres remains a hard
  *  dependency (failure audit rows, pending-write claims, UC1). There is no
  *  data migration attached to the flag — flipping it strands existing rows
  *  on the previous backend (scripts/migration/ moves them). src/instrumentation.ts

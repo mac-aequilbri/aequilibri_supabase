@@ -190,6 +190,22 @@ export const TABLES = [
     links: [{ pg: "jobId", air: "Job", target: "job" }],
   },
   {
+    // Spec 12 per-transaction ledger → PlatConCashflowLedger (migration-plan
+    // Phase 2; mover-v1 excluded it because the only PG model was the legacy
+    // monthly PlatConCashflow shape). Status passes through untranslated: the
+    // app enum (Forecast/Confirmed/Paid/Overdue) may be a subset of drifted
+    // live-base options (fieldMaps' createDefault is "Scheduled") — drifted
+    // values surface in Phase 5 reconciliation instead of silent coercion.
+    // jobId is NOT NULL in PG: rows with no Job link are skipped + logged.
+    key: "cashflow", air: "CASHFLOWS", model: "platConCashflowLedger",
+    fields: [
+      f("name", "Cashflow_Name"), f("period", "Period"), f("type", "Type"),
+      f("amount", "Amount", "num"), f("sourceOrPayee", "Source_Or_Payee"),
+      f("category", "Category"), f("status", "Status"), f("notes", "Notes"),
+    ],
+    links: [{ pg: "jobId", air: "Job", target: "job" }],
+  },
+  {
     key: "variation_order", air: "CHANGE_LOG", model: "platConVariationOrder",
     fields: [
       f("title", "Change_Name"), f("refNumber", "Ref_Number"), f("description", "Description"),
