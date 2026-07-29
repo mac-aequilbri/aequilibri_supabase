@@ -1,15 +1,22 @@
 import type { Metadata } from "next";
-import { Montserrat } from "next/font/google";
+import localFont from "next/font/local";
 import Link from "next/link";
 import { ClerkProvider, Show, UserButton } from "@clerk/nextjs";
 import { clerkEnabled } from "@/lib/platform/authConfig";
 import { isPlatformAdmin } from "@/lib/platform/org-context";
 import "./globals.css";
 
-const montserrat = Montserrat({
+// Vendored from @fontsource/montserrat 5.3.0 (latin subset). next/font/google
+// fetches from fonts.gstatic.com at compile time, which is blocked on this
+// network and is an external build dependency we don't want in a
+// compliance-focused build anyway.
+const montserrat = localFont({
   variable: "--font-montserrat",
-  weight: ["400", "600", "700"],
-  subsets: ["latin"],
+  src: [
+    { path: "./fonts/montserrat-latin-400-normal.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/montserrat-latin-600-normal.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/montserrat-latin-700-normal.woff2", weight: "700", style: "normal" },
+  ],
 });
 
 export const metadata: Metadata = {

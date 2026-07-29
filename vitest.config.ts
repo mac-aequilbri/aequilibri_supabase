@@ -17,6 +17,13 @@ export default defineConfig({
     // (one base for every test org → cross-org isolation can't hold; string
     // "rec…" ids break Postgres lookups). Airtable-mode writes are proven
     // separately by scripts/airtable-write-proof.mjs against the demo base.
-    env: { AIRTABLE_MIGRATION: "false" },
+    // Clerk keys are blanked for the same reason: the suites assume demo-mode
+    // auth ("no Clerk in tests"), and @clerk/nextjs/server's `server-only`
+    // guard throws under vitest if a local .env activates clerkEnabled().
+    env: {
+      AIRTABLE_MIGRATION: "false",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "",
+      CLERK_SECRET_KEY: "",
+    },
   },
 });
