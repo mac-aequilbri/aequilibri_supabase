@@ -15,6 +15,7 @@
 // Requires: DATABASE_URL reachable, AIRTABLE_PAT, Phase B migration applied.
 
 import { PrismaClient } from "@prisma/client";
+import { PrismaClient as ControlPrismaClient } from "@prisma/control-client";
 import { TABLES, EXCLUDED, STATUS_MAPS } from "./_map.mjs";
 import { envVar, createAll, updateAll, loadState, saveState, parseArgs } from "./_shared.mjs";
 
@@ -24,7 +25,8 @@ if (!baseId) { console.error(USAGE); process.exit(1); }
 envVar("DATABASE_URL");
 const prisma = new PrismaClient();
 
-const orgRow = await prisma.platOrganisation.findUnique({ where: { slug: org } });
+const controlDb = new ControlPrismaClient();
+const orgRow = await controlDb.platOrganisation.findUnique({ where: { slug: org } });
 if (!orgRow) throw new Error(`No PlatOrganisation with slug '${org}'.`);
 
 const statePath = `var/migration/${org}-pg-to-air.json`;

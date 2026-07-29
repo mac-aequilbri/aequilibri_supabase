@@ -15,15 +15,19 @@
 // 20260728000000_phase_b_airtable_bridge applied.
 
 import { PrismaClient } from "@prisma/client";
+// §2b split: the org registry lives in the CONTROL database now.
+import { PrismaClient as ControlPrismaClient } from "@prisma/control-client";
 import { TABLES, EXCLUDED, REVERSE_STATUS_MAPS } from "./_map.mjs";
 import { envVar, listAll, loadState, saveState, parseArgs } from "./_shared.mjs";
 
 const USAGE = "Usage: node scripts/migration/airtable-to-pg.mjs --org <slug> [--base appXXX] [--tables a,b] [--execute]";
 const { org, base: baseArg, tables: only, execute } = parseArgs(USAGE);
 envVar("DATABASE_URL"); // fail fast with a clear message
+envVar("CONTROL_DATABASE_URL");
 const prisma = new PrismaClient();
+const controlDb = new ControlPrismaClient();
 
-const orgRow = await prisma.platOrganisation.findUnique({ where: { slug: org } });
+const orgRow = await controlDb.platOrganisation.findUnique({ where: { slug: org } });
 if (!orgRow) throw new Error(`No PlatOrganisation with slug '${org}' — create/seed the org first.`);
 const baseId = baseArg ?? orgRow.airtableBaseId;
 if (!baseId) throw new Error(`Org '${org}' has no airtableBaseId — pass --base appXXX.`);

@@ -771,69 +771,6 @@ model Uc1ActionHub {
 
 // â”€â”€ Core tier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-model PlatOrganisation {
-  id                     Int      @id @default(autoincrement())
-  // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
-  // row's counterpart in the org's Airtable base. Null = never synced.
-  airtableRecordId       String?  @unique @map("airtable_record_id") @db.VarChar(20)
-  slug                   String   @unique @db.VarChar(100)
-  name                   String   @db.VarChar(200)
-  vertical               String   @default("construction") @db.VarChar(50)
-  defaultEngagementType  String   @default("long_project") @map("default_engagement_type") @db.VarChar(30)
-  allowedEngagementTypes String   @default("[]") @map("allowed_engagement_types")
-  aiAuthority            String   @default("approve_required") @map("ai_authority") @db.VarChar(30)
-  settings               String   @default("{}")
-  isActive               Boolean  @default(true) @map("is_active")
-  createdAt              DateTime @default(now()) @map("created_at")
-  // Per-customer Airtable base (the spec's "bases are clones"). Set when the
-  // org's base is provisioned; resolveBaseId() reads it. Null = not yet on
-  // Airtable (falls back to AIRTABLE_BASES env / demo base).
-  airtableBaseId         String?  @map("airtable_base_id") @db.VarChar(20)
-
-  contacts                  PlatContact[]
-  jobs                      PlatJob[]
-  workstreams               PlatWorkstream[]
-  actions                   PlatActionHub[]
-  decisions                 PlatDecision[]
-  learningRules             PlatLearningRule[]
-  hypotheses                PlatHypothesis[]
-  corrections               PlatCorrection[]
-  execLogs                  PlatExecutionLog[]
-  documents                 PlatDocument[]
-  snapshots                 PlatIntelligenceSnapshot[]
-  chatSessions              PlatChatSession[]
-  chatMessages              PlatChatMessage[]
-  conPhases                 PlatConPhase[]
-  conBudgetLines            PlatConBudgetLine[]
-  conCashflows              PlatConCashflow[]
-  conCashflowLedger         PlatConCashflowLedger[]
-  conRisks                  PlatConRisk[]
-  conVariations             PlatConVariationOrder[]
-  conVendors                PlatConVendor[]
-  conProcurement            PlatConProcurement[]
-  conRooms                  PlatConRoomMatrix[]
-  conMinutes                PlatConMeetingMinutes[]
-  conReports                PlatConWeeklyReport[]
-  conBimModels              PlatConBimModel[]
-  conPortalTokens           PlatConPortalToken[]
-  conPhaseEvidence          PlatConPhaseEvidence[]
-  conQuotes                 PlatConQuote[]
-  conQuoteLines             PlatConQuoteLine[]
-  conAccounting             PlatConAccountingConnection[]
-  cfgTeam                   PlatCfgTeamMember[]
-  cfgRegions                PlatCfgRegion[]
-  cfgReferences             PlatCfgReference[]
-  cfgNomenclature           PlatCfgNomenclature[]
-  cfgSettings               PlatCfgSetting[]
-  pendingWrites             PlatPendingWrite[]
-  assessments               PlatAssessment[]
-  platComms                 PlatComms[]
-  platConPlanTasks          PlatConPlanTask[]
-  platEngagementTypeConfigs PlatEngagementTypeConfig[]
-
-  @@map("plat_core_organisation")
-}
-
 // Approval queue for deferred AI writes — split out of PlatExecutionLog so
 // the execution log stays an append-only audit trail while proposals carry
 // mutable workflow state (status, resolution, expiry).
@@ -859,7 +796,6 @@ model PlatPendingWrite {
   expiresAt        DateTime  @map("expires_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, status])
   @@unique([orgId, airtableRecordId])
@@ -888,7 +824,6 @@ model PlatAssessment {
   createdBy        String   @default("") @map("created_by") @db.VarChar(200)
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, status])
   @@unique([orgId, airtableRecordId])
@@ -912,7 +847,6 @@ model PlatContact {
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org  PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   jobs PlatJob[]
 
   @@index([orgId, isActive])
@@ -948,7 +882,6 @@ model PlatJob {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  org           PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   clientContact PlatContact?     @relation(fields: [clientContactId], references: [id], onDelete: SetNull)
 
   workstreams      PlatWorkstream[]
@@ -995,7 +928,6 @@ model PlatWorkstream {
   lastUpdated      DateTime @updatedAt @map("last_updated")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org     PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job     PlatJob?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
   actions PlatActionHub[]
 
@@ -1032,7 +964,6 @@ model PlatActionHub {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  org        PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job        PlatJob?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
   workstream PlatWorkstream?  @relation(fields: [workstreamId], references: [id], onDelete: SetNull)
 
@@ -1060,7 +991,6 @@ model PlatDecision {
   decidedAt        DateTime? @map("decided_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([orgId, status])
@@ -1096,7 +1026,6 @@ model PlatLearningRule {
   dateActivated      DateTime? @map("date_activated")
   createdAt          DateTime  @default(now()) @map("created_at")
 
-  org              PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   sourceHypothesis PlatHypothesis?  @relation(fields: [sourceHypothesisId], references: [id], onDelete: SetNull)
   corrections      PlatCorrection[]
 
@@ -1126,7 +1055,6 @@ model PlatHypothesis {
   reviewedAt       DateTime? @map("reviewed_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org           PlatOrganisation   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   promotedRules PlatLearningRule[]
   corrections   PlatCorrection[]
 
@@ -1161,7 +1089,6 @@ model PlatCorrection {
   ruleId              Int?     @map("rule_id")
   createdAt           DateTime @default(now()) @map("created_at")
 
-  org        PlatOrganisation  @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job        PlatJob?          @relation(fields: [jobId], references: [id], onDelete: SetNull)
   hypothesis PlatHypothesis?   @relation(fields: [hypothesisId], references: [id], onDelete: SetNull)
   rule       PlatLearningRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
@@ -1194,7 +1121,6 @@ model PlatExecutionLog {
   promptVersion    String    @default("") @map("prompt_version") @db.VarChar(50)
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
 
   @@index([orgId, status, createdAt])
@@ -1229,7 +1155,6 @@ model PlatDocument {
   analyzedAt       DateTime? @map("analyzed_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org            PlatOrganisation       @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job            PlatJob?               @relation(fields: [jobId], references: [id], onDelete: SetNull)
   parentDocument PlatDocument?          @relation("PlatDocumentVersions", fields: [parentDocumentId], references: [id], onDelete: SetNull)
   versions       PlatDocument[]         @relation("PlatDocumentVersions")
@@ -1259,7 +1184,6 @@ model PlatIntelligenceSnapshot {
   metrics          String   @default("{}")
   notes            String   @default("")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, capturedAt])
   @@unique([orgId, airtableRecordId])
@@ -1279,7 +1203,6 @@ model PlatChatSession {
   endedAt          DateTime? @map("ended_at")
   summary          String    @default("")
 
-  org      PlatOrganisation  @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job      PlatJob?          @relation(fields: [jobId], references: [id], onDelete: SetNull)
   messages PlatChatMessage[]
 
@@ -1301,7 +1224,6 @@ model PlatChatMessage {
   toolCalls        String   @default("[]") @map("tool_calls")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org     PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   session PlatChatSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, createdAt])
@@ -1335,7 +1257,6 @@ model PlatConPhase {
   evidenceSuggestion String    @default("{}") @map("evidence_suggestion")
   createdAt          DateTime  @default(now()) @map("created_at")
 
-  org         PlatOrganisation       @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job         PlatJob                @relation(fields: [jobId], references: [id], onDelete: Cascade)
   budgetLines PlatConBudgetLine[]
   evidence    PlatConPhaseEvidence[]
@@ -1361,7 +1282,6 @@ model PlatConPhaseEvidence {
   addedBy          String   @default("") @map("added_by") @db.VarChar(200)
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org      PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job      PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
   phase    PlatConPhase     @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   document PlatDocument     @relation(fields: [documentId], references: [id], onDelete: Cascade)
@@ -1389,7 +1309,6 @@ model PlatConBudgetLine {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  org   PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job   PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
   phase PlatConPhase?    @relation(fields: [phaseId], references: [id], onDelete: SetNull)
 
@@ -1412,7 +1331,6 @@ model PlatConCashflow {
   notes            String   @default("")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, period])
@@ -1445,7 +1363,6 @@ model PlatConCashflowLedger {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, airtableRecordId])
@@ -1472,7 +1389,6 @@ model PlatConRisk {
   createdByAi      Boolean   @default(false) @map("created_by_ai")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, status])
@@ -1502,7 +1418,6 @@ model PlatConVariationOrder {
   approvedAt       DateTime? @map("approved_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, status])
@@ -1541,7 +1456,6 @@ model PlatConQuote {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  org   PlatOrganisation   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job   PlatJob?           @relation(fields: [jobId], references: [id], onDelete: Cascade)
   lines PlatConQuoteLine[]
 
@@ -1568,7 +1482,6 @@ model PlatConQuoteLine {
   sortOrder        Int      @default(0) @map("sort_order")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org   PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   quote PlatConQuote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
 
   @@index([quoteId, sortOrder])
@@ -1593,7 +1506,6 @@ model PlatConVendor {
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org          PlatOrganisation     @relation(fields: [orgId], references: [id], onDelete: Cascade)
   procurements PlatConProcurement[]
 
   @@index([orgId, isActive])
@@ -1620,7 +1532,6 @@ model PlatConProcurement {
   dueDate          DateTime? @map("due_date") @db.Date
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org    PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job    PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
   vendor PlatConVendor?   @relation(fields: [vendorId], references: [id], onDelete: SetNull)
 
@@ -1645,7 +1556,6 @@ model PlatConRoomMatrix {
   notes            String   @default("")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, zone])
@@ -1671,7 +1581,6 @@ model PlatConMeetingMinutes {
   confirmedAt      DateTime? @map("confirmed_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, status])
@@ -1698,7 +1607,6 @@ model PlatConWeeklyReport {
   sentAt           DateTime? @map("sent_at")
   documentId       Int?      @map("document_id")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, weekEnding])
@@ -1722,7 +1630,6 @@ model PlatConBimModel {
   notes            String   @default("")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId])
@@ -1745,7 +1652,6 @@ model PlatConPortalToken {
   expiresAt        DateTime? @map("expires_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
   job PlatJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, isActive])
@@ -1769,7 +1675,6 @@ model PlatConAccountingConnection {
   recordsSynced    Int       @default(0) @map("records_synced")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId])
   @@unique([orgId, airtableRecordId])
@@ -1791,7 +1696,6 @@ model PlatCfgTeamMember {
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, isActive])
   @@unique([orgId, airtableRecordId])
@@ -1812,7 +1716,6 @@ model PlatCfgRegion {
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, isActive])
   @@unique([orgId, airtableRecordId])
@@ -1834,7 +1737,6 @@ model PlatCfgReference {
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, type, code])
   @@unique([orgId, airtableRecordId])
@@ -1852,7 +1754,6 @@ model PlatCfgNomenclature {
   standardTerm     String   @map("standard_term") @db.VarChar(200)
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, customerTerm])
   @@unique([orgId, airtableRecordId])
@@ -1870,7 +1771,6 @@ model PlatCfgSetting {
   value            String   @default("{}")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, key])
   @@unique([orgId, airtableRecordId])
@@ -1908,7 +1808,6 @@ model PlatComms {
   notes            String    @default("")
   createdAt        DateTime  @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, status])
   @@unique([orgId, airtableRecordId])
@@ -1935,7 +1834,6 @@ model PlatConPlanTask {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, status])
   @@unique([orgId, airtableRecordId])
@@ -1961,7 +1859,6 @@ model PlatEngagementTypeConfig {
   notes            String   @default("")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  org PlatOrganisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, engagementType])
   @@unique([orgId, airtableRecordId])
@@ -1974,140 +1871,4 @@ model PlatEngagementTypeConfig {
 // no orgId column — rows are keyed by Org_Slug or are global catalogs. The
 // PlatCtl prefix is exempted from the org-isolation guard in src/lib/db.ts.
 // ---------------------------------------------------------------------
-
-model PlatCtlOrgRegistry {
-  id                     Int      @id @default(autoincrement())
-  airtableRecordId       String?  @unique @map("airtable_record_id") @db.VarChar(20)
-  slug                   String   @unique @db.VarChar(100)
-  name                   String   @db.VarChar(200)
-  orgId                  Int?     @map("org_id") // legacy PlatOrganisation.id, when known
-  vertical               String   @default("construction") @db.VarChar(50)
-  defaultEngagementType  String   @default("long_project") @map("default_engagement_type") @db.VarChar(30)
-  allowedEngagementTypes String   @default("[]") @map("allowed_engagement_types")
-  aiAuthority            String   @default("approve_required") @map("ai_authority") @db.VarChar(30)
-  settings               String   @default("{}")
-  isActive               Boolean  @default(true) @map("is_active")
-  airtableBaseId         String?  @map("airtable_base_id") @db.VarChar(20)
-  createdAt              DateTime @default(now()) @map("created_at")
-
-  @@map("plat_ctl_org_registry")
-}
-
-model PlatCtlTeamMember {
-  id               Int      @id @default(autoincrement())
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
-  orgSlug          String   @map("org_slug") @db.VarChar(100)
-  email            String   @db.VarChar(254)
-  name             String   @default("") @db.VarChar(200)
-  role             String   @default("member") @db.VarChar(30)
-  isActive         Boolean  @default(true) @map("is_active")
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  @@unique([orgSlug, email])
-  @@map("plat_ctl_team")
-}
-
-// Project-RLS job assignments. Job_Rec_Id holds the Airtable rec… id of the
-// job (the control base predates the Postgres bridge) — keep as string.
-model PlatCtlAssignment {
-  id               Int      @id @default(autoincrement())
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
-  orgSlug          String   @map("org_slug") @db.VarChar(100)
-  email            String   @db.VarChar(254)
-  jobRecId         String   @map("job_rec_id") @db.VarChar(20)
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  @@index([orgSlug, email])
-  @@map("plat_ctl_assignment")
-}
-
-model PlatCtlConnection {
-  id               Int       @id @default(autoincrement())
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
-  orgSlug          String    @map("org_slug") @db.VarChar(100)
-  channel          String    @default("") @db.VarChar(50)
-  direction        String    @default("in") @db.VarChar(10)
-  connectionKey    String    @default("") @map("connection_key") @db.VarChar(200)
-  credentialRef    String    @default("") @map("credential_ref") @db.VarChar(200)
-  eventFilter      String    @default("") @map("event_filter") @db.VarChar(200)
-  isActive         Boolean   @default(true) @map("is_active")
-  lastEventAt      DateTime? @map("last_event_at")
-  lastStatus       String    @default("") @map("last_status") @db.VarChar(100)
-  notes            String    @default("")
-  createdAt        DateTime  @default(now()) @map("created_at")
-
-  @@index([orgSlug, isActive])
-  @@map("plat_ctl_connection")
-}
-
-// Outbound event queue (n8n consumers). Entity/Job ids are Airtable rec… ids.
-model PlatCtlOutbox {
-  id               Int       @id @default(autoincrement())
-  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
-  orgSlug          String    @map("org_slug") @db.VarChar(100)
-  event            String    @default("") @db.VarChar(100)
-  entityType       String    @default("") @map("entity_type") @db.VarChar(50)
-  entityId         String    @default("") @map("entity_id") @db.VarChar(20)
-  jobId            String    @default("") @map("job_id") @db.VarChar(20)
-  payload          String    @default("{}")
-  summary          String    @default("")
-  status           String    @default("pending") @db.VarChar(20)
-  attempts         Int       @default(0)
-  lastError        String    @default("") @map("last_error")
-  deliveredAt      DateTime? @map("delivered_at")
-  createdAt        DateTime  @default(now()) @map("created_at")
-
-  @@index([orgSlug, status])
-  @@map("plat_ctl_outbox")
-}
-
-model PlatCtlReportCatalog {
-  id               Int      @id @default(autoincrement())
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
-  orgSlug          String   @map("org_slug") @db.VarChar(100)
-  key              String   @db.VarChar(100)
-  title            String   @default("") @db.VarChar(300)
-  prompt           String   @default("")
-  scopes           String   @default("") @db.VarChar(200)
-  source           String   @default("") @db.VarChar(30)
-  isActive         Boolean  @default(true) @map("is_active")
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  @@unique([orgSlug, key])
-  @@map("plat_ctl_report_catalog")
-}
-
-model PlatCtlTemplateRegistry {
-  id               Int      @id @default(autoincrement())
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
-  verticalKey      String   @map("vertical_key") @db.VarChar(100)
-  industry         String   @default("") @db.VarChar(100)
-  subIndustry      String   @default("") @map("sub_industry") @db.VarChar(100)
-  templateBaseId   String   @default("") @map("template_base_id") @db.VarChar(20)
-  sortOrder        Int      @default(0) @map("sort_order")
-  isActive         Boolean  @default(true) @map("is_active")
-  notes            String   @default("")
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  @@index([verticalKey, isActive])
-  @@map("plat_ctl_template_registry")
-}
-
-model PlatCtlJobCatalog {
-  id               Int      @id @default(autoincrement())
-  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
-  verticalKey      String   @map("vertical_key") @db.VarChar(100)
-  engagementType   String   @default("") @map("engagement_type") @db.VarChar(30)
-  key              String   @db.VarChar(100)
-  label            String   @default("") @db.VarChar(200)
-  categoryGroup    String   @default("") @map("category_group") @db.VarChar(100)
-  phases           String   @default("[]")
-  scopeHint        String   @default("") @map("scope_hint")
-  sortOrder        Int      @default(0) @map("sort_order")
-  source           String   @default("") @db.VarChar(30)
-  isActive         Boolean  @default(true) @map("is_active")
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  @@index([verticalKey, key])
-  @@map("plat_ctl_job_catalog")
-}
+

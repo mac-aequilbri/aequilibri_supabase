@@ -279,7 +279,44 @@ control-side models (PlatOrganisation + PlatCtl*) keep the global unique
 INDEX). No `src/` code queried by that key (verified); the movers'
 org-scoped recMaps are compatible unchanged. No drift; 301/301 green.
 
-### Stage B3 — remaining §2b physical split (designed, not yet built)
+### Stage B3.1 — physical control/tenant schema split (2026-07-29) — DONE
+The §2b rule 1 split, executed exactly along the db.ts guard-regex line:
+- **`prisma/control/schema.prisma`** (new): PlatOrganisation + the 8 PlatCtl*
+  models; own migration history (`prisma/control/migrations`, baseline
+  `20260729220000_control_baseline`); own generated client
+  (`@prisma/control-client`); `CONTROL_DATABASE_URL`.
+- **`prisma/schema.prisma`** is now the TENANT schema (78 models): control
+  models removed, all 39 `org PlatOrganisation @relation` FKs dropped (tenant
+  rows keep bare `orgId Int` — no cross-database FKs). Migration
+  `20260729230000_control_plane_split` drops the FKs + the 9 control tables
+  from the tenant DB. Verified: zero code included the `org` relation.
+- **Local topology**: `aequilibri_control` DB created on the same cluster;
+  control rows copied over id-preserving (1 org, 1 team member, 46 job-catalog
+  rows) with sequences bumped, BEFORE the tenant-side drop. Both schemas
+  drift-free against their DBs.
+- **`db.ts` is the two-client seam** (§2b rules 1–2): tenant client keeps the
+  org-isolation guard (rule 3 tripwire); control client is separate; the
+  exported `prisma`/`prismaUnscoped` are dispatch proxies routing control-model
+  property access to the control client — call sites unchanged. `controlDb`
+  exported for control-plane transactions; **`db(ctx)`** exported as the
+  §2b rule 2 resolver seam (returns the shared tenant client until per-org
+  DBs are provisioned).
+- **No cross-DB transactions** (§2b): controlPlane.setControlAssignments →
+  `controlDb.$transaction`; onboarding's PG provisioning restructured to
+  control-writes-first + tenant transaction + compensating control-row
+  cleanup on failure.
+- Movers/reset/seed scripts updated to use the control client for registry
+  lookups. `npm run db:generate` / `db:migrate` cover both schemas.
+- **Verified**: 301/301 tests green against the split databases; app boots —
+  picker/org-resolution/team/assignments served from `aequilibri_control`,
+  cashflow/projects/coordination from the tenant DB. (One wedged-server 404
+  episode on dynamic routes after the switch — restart fixed, same known
+  gotcha.)
+- **Consequence for tests/dev**: deleting an org no longer cascades tenant
+  rows (no cross-DB FK). Suites already clean by slug; orphaned tenant rows
+  in the shared dev DB are inert (new org ids never collide).
+
+### Stage B3 — remaining §2b split work (next)
 Execution order chosen so every step keeps the app green:
 
 1. **Split the Prisma schemas.** `prisma/schema.prisma` stays the TENANT

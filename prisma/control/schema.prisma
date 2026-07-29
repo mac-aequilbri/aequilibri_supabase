@@ -1,0 +1,178 @@
+// Æquilibri CONTROL-PLANE schema (§2b rule 1 / migration-plan Phase 3).
+// One control database per deployment: the org registry (PlatOrganisation)
+// and the PlatCtl* stores. Tenant/domain data lives in prisma/schema.prisma
+// (one database per client org). No cross-database relations by design —
+// tenant tables reference orgId as a bare integer.
+//
+// Generate:  npx prisma generate --schema prisma/control/schema.prisma
+// Migrate:   npx prisma migrate deploy --schema prisma/control/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/@prisma/control-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CONTROL_DATABASE_URL")
+}
+
+model PlatOrganisation {
+  id                     Int      @id @default(autoincrement())
+  // Airtable record-id bridge (backend-switch Phase B): the rec… id of this
+  // row's counterpart in the org's Airtable base. Null = never synced.
+  airtableRecordId       String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  slug                   String   @unique @db.VarChar(100)
+  name                   String   @db.VarChar(200)
+  vertical               String   @default("construction") @db.VarChar(50)
+  defaultEngagementType  String   @default("long_project") @map("default_engagement_type") @db.VarChar(30)
+  allowedEngagementTypes String   @default("[]") @map("allowed_engagement_types")
+  aiAuthority            String   @default("approve_required") @map("ai_authority") @db.VarChar(30)
+  settings               String   @default("{}")
+  isActive               Boolean  @default(true) @map("is_active")
+  createdAt              DateTime @default(now()) @map("created_at")
+  // Per-customer Airtable base (the spec's "bases are clones"). Set when the
+  // org's base is provisioned; resolveBaseId() reads it. Null = not yet on
+  // Airtable (falls back to AIRTABLE_BASES env / demo base).
+  airtableBaseId         String?  @map("airtable_base_id") @db.VarChar(20)
+
+
+  @@map("plat_core_organisation")
+}
+
+model PlatCtlOrgRegistry {
+  id                     Int      @id @default(autoincrement())
+  airtableRecordId       String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  slug                   String   @unique @db.VarChar(100)
+  name                   String   @db.VarChar(200)
+  orgId                  Int?     @map("org_id") // legacy PlatOrganisation.id, when known
+  vertical               String   @default("construction") @db.VarChar(50)
+  defaultEngagementType  String   @default("long_project") @map("default_engagement_type") @db.VarChar(30)
+  allowedEngagementTypes String   @default("[]") @map("allowed_engagement_types")
+  aiAuthority            String   @default("approve_required") @map("ai_authority") @db.VarChar(30)
+  settings               String   @default("{}")
+  isActive               Boolean  @default(true) @map("is_active")
+  airtableBaseId         String?  @map("airtable_base_id") @db.VarChar(20)
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  @@map("plat_ctl_org_registry")
+}
+
+model PlatCtlTeamMember {
+  id               Int      @id @default(autoincrement())
+  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  orgSlug          String   @map("org_slug") @db.VarChar(100)
+  email            String   @db.VarChar(254)
+  name             String   @default("") @db.VarChar(200)
+  role             String   @default("member") @db.VarChar(30)
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([orgSlug, email])
+  @@map("plat_ctl_team")
+}
+
+// Project-RLS job assignments. Job_Rec_Id holds the Airtable rec… id of the
+// job (the control base predates the Postgres bridge) — keep as string.
+model PlatCtlAssignment {
+  id               Int      @id @default(autoincrement())
+  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  orgSlug          String   @map("org_slug") @db.VarChar(100)
+  email            String   @db.VarChar(254)
+  jobRecId         String   @map("job_rec_id") @db.VarChar(20)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([orgSlug, email])
+  @@map("plat_ctl_assignment")
+}
+
+model PlatCtlConnection {
+  id               Int       @id @default(autoincrement())
+  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  orgSlug          String    @map("org_slug") @db.VarChar(100)
+  channel          String    @default("") @db.VarChar(50)
+  direction        String    @default("in") @db.VarChar(10)
+  connectionKey    String    @default("") @map("connection_key") @db.VarChar(200)
+  credentialRef    String    @default("") @map("credential_ref") @db.VarChar(200)
+  eventFilter      String    @default("") @map("event_filter") @db.VarChar(200)
+  isActive         Boolean   @default(true) @map("is_active")
+  lastEventAt      DateTime? @map("last_event_at")
+  lastStatus       String    @default("") @map("last_status") @db.VarChar(100)
+  notes            String    @default("")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([orgSlug, isActive])
+  @@map("plat_ctl_connection")
+}
+
+// Outbound event queue (n8n consumers). Entity/Job ids are Airtable rec… ids.
+model PlatCtlOutbox {
+  id               Int       @id @default(autoincrement())
+  airtableRecordId String?   @unique @map("airtable_record_id") @db.VarChar(20)
+  orgSlug          String    @map("org_slug") @db.VarChar(100)
+  event            String    @default("") @db.VarChar(100)
+  entityType       String    @default("") @map("entity_type") @db.VarChar(50)
+  entityId         String    @default("") @map("entity_id") @db.VarChar(20)
+  jobId            String    @default("") @map("job_id") @db.VarChar(20)
+  payload          String    @default("{}")
+  summary          String    @default("")
+  status           String    @default("pending") @db.VarChar(20)
+  attempts         Int       @default(0)
+  lastError        String    @default("") @map("last_error")
+  deliveredAt      DateTime? @map("delivered_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([orgSlug, status])
+  @@map("plat_ctl_outbox")
+}
+
+model PlatCtlReportCatalog {
+  id               Int      @id @default(autoincrement())
+  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  orgSlug          String   @map("org_slug") @db.VarChar(100)
+  key              String   @db.VarChar(100)
+  title            String   @default("") @db.VarChar(300)
+  prompt           String   @default("")
+  scopes           String   @default("") @db.VarChar(200)
+  source           String   @default("") @db.VarChar(30)
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([orgSlug, key])
+  @@map("plat_ctl_report_catalog")
+}
+
+model PlatCtlTemplateRegistry {
+  id               Int      @id @default(autoincrement())
+  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  verticalKey      String   @map("vertical_key") @db.VarChar(100)
+  industry         String   @default("") @db.VarChar(100)
+  subIndustry      String   @default("") @map("sub_industry") @db.VarChar(100)
+  templateBaseId   String   @default("") @map("template_base_id") @db.VarChar(20)
+  sortOrder        Int      @default(0) @map("sort_order")
+  isActive         Boolean  @default(true) @map("is_active")
+  notes            String   @default("")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([verticalKey, isActive])
+  @@map("plat_ctl_template_registry")
+}
+
+model PlatCtlJobCatalog {
+  id               Int      @id @default(autoincrement())
+  airtableRecordId String?  @unique @map("airtable_record_id") @db.VarChar(20)
+  verticalKey      String   @map("vertical_key") @db.VarChar(100)
+  engagementType   String   @default("") @map("engagement_type") @db.VarChar(30)
+  key              String   @db.VarChar(100)
+  label            String   @default("") @db.VarChar(200)
+  categoryGroup    String   @default("") @map("category_group") @db.VarChar(100)
+  phases           String   @default("[]")
+  scopeHint        String   @default("") @map("scope_hint")
+  sortOrder        Int      @default(0) @map("sort_order")
+  source           String   @default("") @db.VarChar(30)
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([verticalKey, key])
+  @@map("plat_ctl_job_catalog")
+}

@@ -28,7 +28,14 @@ if (!process.argv.includes("--yes")) {
   process.exit(1);
 }
 
-const prisma = new PrismaClient();
-const r = await prisma.platOrganisation.deleteMany({});
-console.log(`Deleted ${r.count} platform organisations (cascade).`);
-await prisma.$disconnect();
+// §2b split: the registry is in the control DB; tenant rows no longer cascade
+// from an org delete (no cross-DB FK). This dev utility removes the registry
+// entries only — orphaned tenant rows in the (shared dev) tenant DB are
+// harmless and get swept when the DB is recreated.
+const { PrismaClient: ControlPrismaClient } = await import("@prisma/control-client");
+const controlDb = new ControlPrismaClient();
+await controlDb.platCtlTeamMember.deleteMany({});
+await controlDb.platCtlAssignment.deleteMany({});
+const r = await controlDb.platOrganisation.deleteMany({});
+console.log(`Deleted ${r.count} platform organisations (registry + team + assignments; tenant rows not cascaded — §2b split).`);
+await controlDb.$disconnect();

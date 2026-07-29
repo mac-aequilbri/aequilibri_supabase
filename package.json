@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "db:generate": "prisma generate",
+    "db:generate": "prisma generate && prisma generate --schema prisma/control/schema.prisma",
+    "db:migrate": "prisma migrate deploy && prisma migrate deploy --schema prisma/control/schema.prisma",
     "db:pull": "prisma db pull",
     "db:push": "prisma db push",
     "db:dev:gen": "node scripts/gen-sqlite-schema.mjs && prisma generate --schema prisma/schema.dev.prisma"

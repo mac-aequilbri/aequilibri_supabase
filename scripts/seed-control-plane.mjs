@@ -13,7 +13,8 @@
 // Omit --slug to seed only the job catalogs.
 
 import { readFileSync } from "node:fs";
-import { PrismaClient } from "@prisma/client";
+// Control-plane models live in the CONTROL client/database (§2b split).
+import { PrismaClient } from "@prisma/control-client";
 
 const prisma = new PrismaClient();
 

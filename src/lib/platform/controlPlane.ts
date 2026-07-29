@@ -21,7 +21,7 @@
 // events (outbox) therefore carry PG-native numeric entity/job ids as strings
 // once an org runs on Postgres — the n8n side is reworked to match in Phase 6.
 
-import { prisma } from "@/lib/db";
+import { controlDb, prisma } from "@/lib/db";
 import { airtableEnabled } from "@/lib/airtable/config";
 import * as air from "@/lib/airtable/control";
 import { controlEnabled } from "@/lib/airtable/control";
@@ -273,7 +273,9 @@ export async function setControlAssignments(
   if (!pg()) return air.setControlAssignments(slug, email, jobRecIds);
   const lower = email.toLowerCase();
   const unique = [...new Set(jobRecIds.filter(Boolean))];
-  await prisma.$transaction(async (tx) => {
+  // Control-plane transaction — runs on the control DB explicitly (the
+  // dispatch client's $transaction is tenant-side; see lib/db.ts).
+  await controlDb.$transaction(async (tx) => {
     const existing = await tx.platCtlAssignment.findMany({ where: { orgSlug: slug } });
     const mine = existing.filter((a) => a.email.toLowerCase() === lower);
     if (mine.length) {

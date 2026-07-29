@@ -18,7 +18,7 @@ import {
 } from "@/lib/platform/controlPlane";
 import { airtableMapFor, toFields } from "@/lib/airtable/fieldMaps";
 import { ensureAppRuntimeTables, probeBaseDataAccess, provisionClientBase } from "@/lib/airtable/provision";
-import { prisma } from "@/lib/db";
+import { controlDb, prisma } from "@/lib/db";
 import { logger, errMeta } from "@/lib/logger";
 import { CASCADE_RULE_SEEDS } from "@/lib/platform/cascade";
 import { defaultModule1Governance, normalizeTeamRole, type TeamRole } from "@/lib/platform/module1Governance";
@@ -370,33 +370,33 @@ export async function provisionOrganisation(input: ProvisionInput): Promise<Prov
     return { ok: true, orgId, slug };
   }
 
-  const orgId = await prisma.$transaction(async (tx) => {
-    // ── Instance Setup ──────────────────────────────────────────────
-    const org = await tx.platOrganisation.create({
+  // ── Instance Setup — CONTROL database first (org registry + team). No
+  // cross-database transaction exists (§2b), so the tenant seeding below runs
+  // in its own transaction with a compensating deactivation on failure.
+  const org = await controlDb.platOrganisation.create({
+    data: {
+      slug,
+      name: input.name.trim(),
+      vertical,
+      defaultEngagementType: input.defaultEngagementType,
+      allowedEngagementTypes: JSON.stringify(allowed),
+      aiAuthority: input.aiAuthority,
+      settings,
+      airtableBaseId,
+    },
+  });
+  if (input.adminName.trim()) {
+    await controlDb.platCtlTeamMember.create({
       data: {
-        slug,
-        name: input.name.trim(),
-        vertical,
-        defaultEngagementType: input.defaultEngagementType,
-        allowedEngagementTypes: JSON.stringify(allowed),
-        aiAuthority: input.aiAuthority,
-        settings,
-        airtableBaseId,
+        orgSlug: slug,
+        name: input.adminName.trim(),
+        role: normalizeTeamRole(input.adminRole),
+        email: input.adminEmail.trim(),
       },
     });
+  }
 
-    if (input.adminName.trim()) {
-      // Team lives in the control plane (PlatCtlTeamMember, keyed by slug) —
-      // migration-plan Phase 3 / §2b topology.
-      await tx.platCtlTeamMember.create({
-        data: {
-          orgSlug: slug,
-          name: input.adminName.trim(),
-          role: normalizeTeamRole(input.adminRole),
-          email: input.adminEmail.trim(),
-        },
-      });
-    }
+  const orgId = await prisma.$transaction(async (tx) => {
 
     const referenceRows = referenceSeedRows(categories, clientPriorities, tradeReferences);
     if (referenceRows.length) {
@@ -476,6 +476,13 @@ export async function provisionOrganisation(input: ProvisionInput): Promise<Prov
     });
 
     return org.id;
+  }).catch(async (err: unknown) => {
+    // No cross-database transaction exists (§2b): if tenant seeding fails,
+    // compensate by removing the control rows so the half-provisioned org
+    // never appears in the picker or auth.
+    await controlDb.platCtlTeamMember.deleteMany({ where: { orgSlug: slug } }).catch(() => {});
+    await controlDb.platOrganisation.delete({ where: { id: org.id } }).catch(() => {});
+    throw err;
   });
 
   // Mirror Customer Config into the org's Airtable base (best effort — the
