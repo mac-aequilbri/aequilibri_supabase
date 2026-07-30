@@ -190,6 +190,10 @@ Extend the movers for everything mover-v1 excluded:
 
 ## Phase 7 — AU infrastructure + cutover (ops checklist, coordinate with owner)
 
+> **DECIDED 2026-07-30: deployment environment is AWS (ap-southeast-2), not Render.**
+> The detailed plan is `docs/aws-deployment-plan.md` — it supersedes items 1–6
+> below (they are kept for the historical record) and the committed `render.yaml`.
+
 1. Provision production Postgres in an Australian region (Render has NO AU region as of July 2026 — use AWS/Azure/GCP Sydney or Supabase/Neon ap-southeast-2). App compute location per client's at-rest-vs-processing answer (unresolved owner question — confirm before committing infra).
 2. **Scheduled backups** — already a Critical in the 2026-07-26 enterprise audit; non-negotiable before go-live. Include attachment storage.
 3. Secrets: fresh secrets for the new deployment (the hardening audit required rotation anyway); production Clerk instance decision (shared vs new).
@@ -205,8 +209,8 @@ Extend the movers for everything mover-v1 excluded:
 1. ~~Chat/audit history: migrate or archive? (Phase 4)~~ **DECIDED 2026-07-29: migrate** (chat sessions/messages + EXECUTION_LOG map entries added).
 2. ~~CHANGE_LOG / DOMAIN_LABELS / REGIONS: model or drop? (Phase 4)~~ **DECIDED 2026-07-29: model CHANGE_LOG** (PlatConChangeLog, non-variation rows), **drop DOMAIN_LABELS + REGIONS**.
 3. Keep `pg-to-airtable.mjs` rollback capability through cutover, or delete in Phase 6?
-4. At-rest-only vs processing residency — determines app-compute location and whether Clerk/Anthropic/n8n need replacing. (Phase 7, but affects scope)
-5. New repo/remote name + Render-vs-AU-host for app compute.
+4. At-rest-only vs processing residency — determines app-compute location and whether Clerk/Anthropic/n8n need replacing. (Phase 7, but affects scope) **PARTIALLY RESOLVED 2026-07-30: app compute + data both AU (AWS Sydney); third-party processing (Anthropic/Clerk/n8n) still needs client sign-off — see aws-deployment-plan.md §8.**
+5. New repo/remote name + Render-vs-AU-host for app compute. **HOST DECIDED 2026-07-30: AWS (see docs/aws-deployment-plan.md). Repo name/org still open.**
 
 ## Key file inventory
 | Concern | Path |

@@ -552,6 +552,26 @@ Execution order chosen so every step keeps the app green:
    roofing demo, not client data — putting them per-tenant would duplicate
    them). Confirm with owner before cutover.
 
+## Phase 7 — AU infrastructure + cutover (planning started 2026-07-30)
+
+**Owner decision 2026-07-30: deployment environment is AWS, not Render.**
+Wrote `docs/aws-deployment-plan.md` — the detailed Phase 7 plan (supersedes
+the plan doc's original Render-era checklist and the committed `render.yaml`):
+ECS Fargate single task + RDS PostgreSQL 16 (all databases on one instance,
+plain non-superuser app role so RLS bites) + S3 document storage + EventBridge
+Scheduler → the cron endpoint + Secrets Manager + GitHub Actions/ECR OIDC
+deploys, everything in ap-southeast-2. Three workstreams: A (infra as code),
+B (small code items: S3 storer, Dockerfile/standalone, health DB probes, CI),
+C (prod data materialisation + cutover runbook). Estimate ≈1.5–2 eng weeks.
+
+Decision-tracker effects: decision 5's host half resolved (AWS; repo name/org
+still open); decision 4's app-compute half resolved (compute + data both AU —
+Sydney); third-party processing (Anthropic/Clerk/n8n) still needs client
+sign-off (plan §8). Decision 3 (`pg-to-airtable.mjs` keep/delete) still open.
+
+No implementation started — waiting on the plan's "Open items for the owner"
+(Terraform vs CDK, repo, domain, §8 residency stance).
+
 ### Notes / gotchas
 - `templates/actions.ts` is UTF-16-encoded on disk (grep sees it as binary) —
   edit via tooling that preserves encoding.
