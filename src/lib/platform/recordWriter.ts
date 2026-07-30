@@ -8,15 +8,11 @@
 // row, audit events only ever get added.
 
 import { z } from "zod";
-import { airtableEnabled, core } from "@/lib/airtable";
-import { airtableMapFor, toFields } from "@/lib/airtable/fieldMaps";
 import { db, prisma } from "@/lib/db";
 import { logger, errMeta } from "@/lib/logger";
 import { Actor, OrgCtx } from "./types";
 import { emitOutboundEvent } from "./outbox";
 import { proposalJobId } from "./proposalSource";
-import { reconcileAirtableWrite } from "./reconciliation";
-import { enforceVocab, type VocabCoercion } from "./vocab";
 import { canWrite } from "./roles";
 
 // ── field helpers (typecast layer) ────────────────────────────────────
@@ -487,16 +483,8 @@ export async function readRecord(
   table: WritableTable,
   recordId: number | string,
 ): Promise<Record<string, unknown> | null> {
-  const map = airtableEnabled(ctx) ? airtableMapFor(table) : undefined;
-  if (map && typeof recordId === "string") {
-    try {
-      return await core.get(ctx.orgSlug, map.table, recordId);
-    } catch {
-      return null;
-    }
-  }
   const def: TableDef = REGISTRY[table];
-  if (!def.delegate) return null; // Airtable-only table read via a numeric id — n/a
+  if (!def.delegate) return null; // no Postgres delegate — nothing to read
   const row = await def.delegate(ctx).findFirst({
     where: { id: Number(recordId), orgId: ctx.orgId },
   });
@@ -581,41 +569,8 @@ async function performWrite(
   recordId: number | string | undefined,
   data: Record<string, unknown>,
 ): Promise<number | string | undefined> {
-  // Airtable as system of record: route to the org's base when the flag is on
-  // and the table has a field map. Tenancy is structural (the base is the org),
-  // so there is no orgId guard here — base resolution derives from ctx.orgSlug.
-  const map = airtableEnabled(ctx) ? airtableMapFor(table) : undefined;
-  if (map) {
-    if (op === "create") {
-      // Learning-rule codes are allocated at write time (mirrors the Postgres
-      // branch); "AUTO" from the assistant executor becomes a real LRN-#### so
-      // the rule's Instance isn't the literal "AUTO".
-      let payload = data;
-      if (table === "learning_rule" && (data.ruleCode === "AUTO" || !data.ruleCode)) {
-        const { nextRuleCode } = await import("@/services/platform/learning");
-        payload = { ...data, ruleCode: await nextRuleCode(ctx) };
-      }
-      const fields = toFields(map, payload, "create");
-      logVocabCoercions(ctx, map.table, enforceVocab(map.table, fields));
-      const rec = await core.create(ctx.orgSlug, map.table, fields);
-      return rec.id;
-    }
-    if (recordId == null) throw new Error(`${op} requires recordId`);
-    const rid = String(recordId);
-    if (op === "update") {
-      const fields = toFields(map, data, "update");
-      logVocabCoercions(ctx, map.table, enforceVocab(map.table, fields));
-      await core.update(ctx.orgSlug, map.table, rid, fields);
-      return rid;
-    }
-    await core.remove(ctx.orgSlug, map.table, [rid]);
-    return rid;
-  }
-
   if (!def.delegate) {
-    throw new Error(
-      `${table} is Airtable-only (no Postgres model); set AIRTABLE_MIGRATION=true`,
-    );
+    throw new Error(`${table} has no Postgres delegate — cannot write.`);
   }
   const delegate = def.delegate(ctx);
   if (def.pgOmit) {
@@ -647,33 +602,8 @@ async function performWrite(
   return numId;
 }
 
-/** actor.type → the EXECUTION_LOG.Initiated_By single-select (typecast on the
- *  client creates the option if missing). */
-const INITIATED_BY: Record<Actor["type"], string> = {
-  ai: "AI",
-  human: "Owner",
-  system: "System",
-};
-
-/** op → canonical EXECUTION_LOG.Action_Type (governance §5.3 — the lowercase
- *  op names were the "create"/"executed" pollution the §5.5 register retags). */
-const AUDIT_ACTION_TYPE: Record<WriteRequest["op"], string> = {
-  create: "Create",
-  update: "Update",
-  delete: "Delete",
-};
-
-/** Surface force-to-review coercions (§5.2 rule 3): warn-logged with full
- *  detail so off-vocabulary writes are visible instead of silently laundered. */
-function logVocabCoercions(ctx: OrgCtx, table: string, coercions: VocabCoercion[]): void {
-  if (!coercions.length) return;
-  logger.warn("Vocab force-to-review applied", { orgId: ctx.orgId, table, coercions });
-}
-
 /** Append an "executed" audit row. The Postgres targetId column only holds
- *  integer ids; an Airtable "rec…" id is recorded in `result` instead. In
- *  Airtable mode the audit is best-effort — a Postgres outage must not undo a
- *  write that already landed in the system of record. */
+ *  integer ids; a legacy Airtable "rec…" id is recorded in `result` instead. */
 async function writeExecutedLog(
   ctx: OrgCtx,
   args: {
@@ -690,25 +620,6 @@ async function writeExecutedLog(
 ): Promise<number | undefined> {
   const targetId = typeof args.recordId === "number" ? args.recordId : null;
   const ref = typeof args.recordId === "string" ? `airtable:${args.recordId}` : "";
-  // Airtable system of record: the audit trail lives in the org's base
-  // EXECUTION_LOG (so it survives a Postgres-free prod). Best-effort — a failed
-  // audit must never undo a write that already landed.
-  if (airtableEnabled(ctx)) {
-    try {
-      await core.create(ctx.orgSlug, "EXECUTION_LOG", {
-        Log_Entry: `${args.op} ${args.physical}`.slice(0, 200),
-        Action_Type: AUDIT_ACTION_TYPE[args.op],
-        Tables_Affected: args.physical,
-        Summary: args.result || args.payload,
-        Initiated_By: INITIATED_BY[args.actor.type] ?? "System",
-        Status: "Done",
-        Date_Time: new Date().toISOString(),
-      });
-    } catch (err) {
-      logger.warn("Airtable execution-log write skipped", { orgId: ctx.orgId, ...errMeta(err) });
-    }
-    return undefined; // Airtable has no numeric audit id to thread
-  }
   try {
     const log = await db(ctx).platExecutionLog.create({
       data: {
@@ -773,32 +684,16 @@ export async function writeRecord(ctx: OrgCtx, req: WriteRequest): Promise<Write
       throw new Error(`Your project assignments do not permit ${req.op} on this ${req.table}.`);
     }
   }
-  // Airtable mode skips the Postgres-shaped Zod schema (which would reject the
-  // string record ids / missing numeric FKs of the Airtable world) and lets the
-  // field map do its own coercion from the raw payload.
-  const onAirtable = airtableEnabled(ctx) && airtableMapFor(req.table) !== undefined;
-  const data = onAirtable
-    ? ((req.data ?? {}) as Record<string, unknown>)
-    : validated(def, req.op, req.data);
+  const data = validated(def, req.op, req.data);
   const jobId = typeof data.jobId === "number" ? data.jobId : undefined;
-  // The Postgres columns above are integer-only, but a proposal's Job_Id is a
-  // text cell that must also hold an Airtable "rec…" id — otherwise every
-  // Airtable-mode proposal stores a blank project and the approvals queue has
-  // to recover it from the payload to scope correctly.
-  const proposalJobId =
-    data.jobId == null || data.jobId === "" ? undefined : String(data.jobId);
-  // Postgres ids live in the Int column; Airtable "rec…" ids ride in the payload.
   // A numeric string (a Postgres id from a form) coerces to the Int column so
-  // the audit trail keeps its numeric target in Postgres mode.
+  // the audit trail keeps its numeric target.
   const numRecordId =
     typeof req.recordId === "number"
       ? req.recordId
       : typeof req.recordId === "string" && /^\d+$/.test(req.recordId)
         ? Number(req.recordId)
         : null;
-  const airRecordId =
-    typeof req.recordId === "string" && req.recordId.startsWith("rec") ? req.recordId : undefined;
-
   if (req.table === "document" && req.op !== "create" && req.recordId != null) {
     const existing = await readRecord(ctx, "document", req.recordId);
     const immutable = isImmutableSnapshot(existing?.aiAnalysis ?? existing?.["AI_Analysis"]);
@@ -816,28 +711,10 @@ export async function writeRecord(ctx: OrgCtx, req: WriteRequest): Promise<Write
     }
   }
 
-  // The reviewer-facing rationale rides in the payload (like __recId) so both
-  // stores carry it without a column; executeProposal strips it pre-write.
+  // The reviewer-facing rationale rides in the payload so it needs no column;
+  // executeProposal strips every "__" key pre-write.
   const rationaleMeta = req.rationale?.trim() ? { __rationale: req.rationale.trim() } : {};
   if (req.requireApproval) {
-    if (airtableEnabled(ctx)) {
-      const expiresAt = new Date(Date.now() + PROPOSAL_TTL_DAYS * 86_400_000).toISOString();
-      const pending = await core.create(ctx.orgSlug, "PENDING_WRITES", {
-        Table_Key: req.table,
-        Op: req.op,
-        Record_Id: req.recordId == null ? "" : String(req.recordId),
-        Payload: JSON.stringify(
-          airRecordId ? { __recId: airRecordId, ...rationaleMeta, ...data } : { ...rationaleMeta, ...data },
-        ),
-        Actor_Type: req.actor.type,
-        Actor_Name: req.actor.name,
-        Status: "proposed",
-        Created_At: new Date().toISOString(),
-        Expires_At: expiresAt,
-        Job_Id: proposalJobId ?? "",
-      });
-      return { status: "proposed", proposalId: pending.id };
-    }
     const pending = await db(ctx).platPendingWrite.create({
       data: {
         orgId: ctx.orgId,
@@ -845,9 +722,7 @@ export async function writeRecord(ctx: OrgCtx, req: WriteRequest): Promise<Write
         tableKey: req.table,
         op: req.op,
         recordId: numRecordId,
-        payload: JSON.stringify(
-          airRecordId ? { __recId: airRecordId, ...rationaleMeta, ...data } : { ...rationaleMeta, ...data },
-        ),
+        payload: JSON.stringify({ ...rationaleMeta, ...data }),
         actorType: req.actor.type,
         actorName: req.actor.name,
         sourceMessageId: req.actor.sourceMessageId,
@@ -885,14 +760,8 @@ export async function writeRecord(ctx: OrgCtx, req: WriteRequest): Promise<Write
       physical: def.physical,
       recordId,
       payload: JSON.stringify({ table: req.table, op: req.op, data }),
-      bestEffort: onAirtable,
+      bestEffort: false,
     });
-    // Spec 12 Module 2 post-write reconciliation: every AI-initiated write is
-    // re-read and diffed against the submitted payload (best-effort; never
-    // fails the write). Human form writes are their own confirmation.
-    if (req.actor.type !== "human" && (req.op === "create" || req.op === "update")) {
-      await reconcileAirtableWrite(ctx, req.table, req.op, data, recordId, req.actor);
-    }
     // Spec 12 Module 5 cascading update rules — third post-write hook (lock
     // plan §5.1). Dynamic import breaks the module cycle (the engine's write
     // effects call back into writeRecord); runCascades never throws and skips
@@ -981,30 +850,6 @@ function claimProposal(ctx: OrgCtx, proposalId: RecordId): () => void {
 }
 
 async function resolvePending(ctx: OrgCtx, proposalId: RecordId): Promise<PendingProposal> {
-  if (airtableEnabled(ctx)) {
-    const row = await core.get(ctx.orgSlug, "PENDING_WRITES", String(proposalId));
-    const status = typeof row["Status"] === "string" ? row["Status"] : "";
-    if (status !== "proposed") throw new Error("Proposal not found (already resolved?)");
-    const expiresAtRaw = typeof row["Expires_At"] === "string" ? row["Expires_At"] : "";
-    const expiresAt = expiresAtRaw ? new Date(expiresAtRaw) : new Date(0);
-    const payload = typeof row["Payload"] === "string" ? row["Payload"] : "{}";
-    return {
-      id: row.id,
-      tableKey: typeof row["Table_Key"] === "string" ? row["Table_Key"] : "",
-      op: typeof row["Op"] === "string" ? row["Op"] : "",
-      recordId: null,
-      payload,
-      actorType: typeof row["Actor_Type"] === "string" ? row["Actor_Type"] : "system",
-      actorName: typeof row["Actor_Name"] === "string" ? row["Actor_Name"] : "",
-      sourceMessageId: null,
-      status,
-      expiresAt,
-      // No numeric id exists in Airtable — but the project itself does, in the
-      // Job_Id column (payload for proposals raised before it was persisted).
-      jobId: null,
-      jobRef: proposalJobId(row["Job_Id"], payload),
-    };
-  }
   const pending = await db(ctx).platPendingWrite.findFirst({
     where: { id: Number(proposalId), orgId: ctx.orgId, status: "proposed" },
   });
@@ -1040,30 +885,20 @@ async function executeProposalClaimed(
 ): Promise<WriteResult> {
   const pending = await resolvePending(ctx, proposalId);
 
-  if (!airtableEnabled(ctx)) {
-    // Atomic claim across instances: only one resolver may move the row out of
-    // "proposed". A second concurrent approval matches zero rows and bails
-    // before performing the write.
-    const claimed = await db(ctx).platPendingWrite.updateMany({
-      where: { id: Number(pending.id), orgId: ctx.orgId, status: "proposed" },
-      data: { status: "executing" },
-    });
-    if (claimed.count !== 1) throw new Error("Proposal not found (already resolved?)");
-  }
+  // Atomic claim across instances: only one resolver may move the row out of
+  // "proposed". A second concurrent approval matches zero rows and bails
+  // before performing the write.
+  const claimed = await db(ctx).platPendingWrite.updateMany({
+    where: { id: Number(pending.id), orgId: ctx.orgId, status: "proposed" },
+    data: { status: "executing" },
+  });
+  if (claimed.count !== 1) throw new Error("Proposal not found (already resolved?)");
 
   if (pending.expiresAt < new Date()) {
-    if (airtableEnabled(ctx)) {
-      await core.update(ctx.orgSlug, "PENDING_WRITES", String(pending.id), {
-        Status: "expired",
-        Resolved_By: approvedBy,
-        Resolved_At: new Date().toISOString(),
-      });
-    } else {
-      await db(ctx).platPendingWrite.update({
-        where: { id: Number(pending.id) },
-        data: { status: "expired", resolvedBy: approvedBy, resolvedAt: new Date() },
-      });
-    }
+    await db(ctx).platPendingWrite.update({
+      where: { id: Number(pending.id) },
+      data: { status: "expired", resolvedBy: approvedBy, resolvedAt: new Date() },
+    });
     throw new Error(
       `Proposal #${pending.id} expired on ${pending.expiresAt.toISOString().slice(0, 10)} — the underlying data may have changed. Ask the assistant to re-propose.`,
     );
@@ -1073,7 +908,6 @@ async function executeProposalClaimed(
   if (!def) throw new Error(`Unknown table in proposal: ${pending.tableKey}`);
   const op = pending.op as WriteRequest["op"];
 
-  const onAirtable = airtableEnabled(ctx) && airtableMapFor(pending.tableKey) !== undefined;
   try {
     const payloadObj = {
       ...(JSON.parse(pending.payload) as Record<string, unknown>),
@@ -1085,29 +919,14 @@ async function executeProposalClaimed(
     for (const k of Object.keys(payloadObj)) {
       if (k.startsWith("__") && k !== "__recId") delete payloadObj[k];
     }
-    // Airtable update/delete proposals stash their "rec…" target in the payload
-    // (the Postgres recordId column is integer-only). Strip it before writing.
-    let target: number | string | undefined = pending.recordId ?? undefined;
-    let data: Record<string, unknown>;
-    if (onAirtable) {
-      if (typeof payloadObj.__recId === "string") target = payloadObj.__recId;
-      const { __recId: _r, ...rest } = payloadObj;
-      void _r;
-      data = rest;
-    } else {
-      // Re-validate: the schema may have tightened since the proposal was
-      // stored, and stored dates revive as ISO strings.
-      data = validated(def, op, payloadObj);
-    }
+    // Legacy Airtable proposals stashed a "rec…" target in the payload — strip
+    // the key defensively (pre-migration rows may still carry it).
+    const target: number | string | undefined = pending.recordId ?? undefined;
+    delete payloadObj.__recId;
+    // Re-validate: the schema may have tightened since the proposal was
+    // stored, and stored dates revive as ISO strings.
+    const data = validated(def, op, payloadObj);
     const recordId = await performWrite(ctx, pending.tableKey as WritableTable, def, op, target, data);
-    // Post-write reconciliation on approved proposals too — the reviewed value
-    // was submitted; this catches drift between submission and storage.
-    if (op !== "delete") {
-      await reconcileAirtableWrite(ctx, pending.tableKey, op, data, recordId, {
-        type: (pending.actorType as Actor["type"]) ?? "system",
-        name: pending.actorName,
-      });
-    }
     const execLogId = await writeExecutedLog(ctx, {
       jobId: pending.jobId ?? undefined,
       actor: {
@@ -1119,22 +938,14 @@ async function executeProposalClaimed(
       physical: def.physical,
       recordId,
       payload: pending.payload,
-      bestEffort: onAirtable,
+      bestEffort: false,
       approvedBy,
       result: `Deferred write approved (proposal #${pending.id})`,
     });
-    if (airtableEnabled(ctx)) {
-      await core.update(ctx.orgSlug, "PENDING_WRITES", String(pending.id), {
-        Status: "executed",
-        Resolved_By: approvedBy,
-        Resolved_At: new Date().toISOString(),
-      });
-    } else {
-      await db(ctx).platPendingWrite.update({
-        where: { id: Number(pending.id) },
-        data: { status: "executed", resolvedBy: approvedBy, resolvedAt: new Date(), execLogId },
-      });
-    }
+    await db(ctx).platPendingWrite.update({
+      where: { id: Number(pending.id) },
+      data: { status: "executed", resolvedBy: approvedBy, resolvedAt: new Date(), execLogId },
+    });
     // Outbound event: an approved write is a confirmed domain change. Best-effort
     // + gated on an active outbound connection (no-op otherwise) — never throws.
     await emitOutboundEvent(ctx, `${pending.tableKey}.${op}`, {
@@ -1175,19 +986,10 @@ async function executeProposalClaimed(
       op: pending.op,
       ...errMeta(err),
     });
-    if (airtableEnabled(ctx)) {
-      await core.update(ctx.orgSlug, "PENDING_WRITES", String(pending.id), {
-        Status: "failed",
-        Resolved_By: approvedBy,
-        Resolved_At: new Date().toISOString(),
-        Error: message,
-      });
-    } else {
-      await db(ctx).platPendingWrite.update({
-        where: { id: Number(pending.id) },
-        data: { status: "failed", resolvedBy: approvedBy, resolvedAt: new Date(), error: message },
-      });
-    }
+    await db(ctx).platPendingWrite.update({
+      where: { id: Number(pending.id) },
+      data: { status: "failed", resolvedBy: approvedBy, resolvedAt: new Date(), error: message },
+    });
     throw err;
   }
 }
@@ -1214,26 +1016,6 @@ async function rejectProposalClaimed(
   reason: string,
 ): Promise<void> {
   const pending = await resolvePending(ctx, proposalId);
-  if (airtableEnabled(ctx)) {
-    await core.update(ctx.orgSlug, "PENDING_WRITES", String(pending.id), {
-      Status: "rejected",
-      Resolved_By: rejectedBy,
-      Resolved_At: new Date().toISOString(),
-      Error: reason,
-    });
-    await core
-      .create(ctx.orgSlug, "EXECUTION_LOG", {
-        Log_Entry: `reject ${pending.tableKey}`.slice(0, 200),
-        Action_Type: "reject",
-        Tables_Affected: pending.tableKey,
-        Summary: reason || `Proposal #${pending.id} rejected`,
-        Initiated_By: "Owner",
-        Status: "rejected",
-        Date_Time: new Date().toISOString(),
-      })
-      .catch(() => {});
-    return;
-  }
   // Guarded on status so a reject racing an approval can't clobber an
   // already-executed proposal's terminal state.
   const rejected = await db(ctx).platPendingWrite.updateMany({

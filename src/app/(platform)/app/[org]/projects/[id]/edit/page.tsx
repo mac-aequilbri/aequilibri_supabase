@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/PageHeader";
 import { SubmitButton } from "@/components/form/SubmitButton";
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { loadJobDetail } from "@/lib/platform/jobDetailSource";
 import { requireOrgCtx } from "@/lib/platform/org-context";
@@ -21,20 +20,17 @@ export default async function EditProjectPage({
   if (!detail) notFound();
   // RLS: can't edit a project you're not assigned to (matches the view page).
   if (!inScope(await currentJobScope(ctx), detail.id)) notFound();
-  const pgJob = !airtableEnabled(ctx)
-    ? await db(ctx).platJob.findFirst({ where: { id: Number(id), orgId: ctx.orgId } })
-    : null;
-  const airJob = airtableEnabled(ctx) ? await core.get(ctx.orgSlug, "JOBS", detail.id).catch(() => null) : null;
+  const pgJob = await db(ctx).platJob.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   const job = {
     id: detail.id,
     code: detail.code,
     name: detail.name,
-    status: pgJob?.status ?? (airJob && typeof airJob["Status"] === "string" ? airJob["Status"] : "intake"),
+    status: pgJob?.status ?? "intake",
     completionPct: detail.completionPct,
     healthScore: detail.healthScore,
     budgetTotal: detail.budget,
-    startDate: pgJob?.startDate ?? (airJob ? (typeof airJob["Date_Estimated"] === "string" ? new Date(airJob["Date_Estimated"]) : null) : null),
-    targetEndDate: pgJob?.targetEndDate ?? (airJob ? (typeof airJob["Target_Completion"] === "string" ? new Date(airJob["Target_Completion"]) : null) : null),
+    startDate: pgJob?.startDate ?? null,
+    targetEndDate: pgJob?.targetEndDate ?? null,
     summary: detail.summary,
   };
 

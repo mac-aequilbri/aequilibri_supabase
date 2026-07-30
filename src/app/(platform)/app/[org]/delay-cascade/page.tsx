@@ -1,7 +1,6 @@
 // Delay cascade analysis — results are logged to the execution log; this
 // page shows the latest analyses alongside the trigger form.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { PageHeader } from "@/components/PageHeader";
 import { SubmitButton } from "@/components/form/SubmitButton";
@@ -16,13 +15,11 @@ export default async function DelayCascadePage({ params }: { params: Promise<{ o
   const ctx = await requireOrgCtx((await params).org);
   const [jobs, analyses] = await Promise.all([
     loadJobOptions(ctx),
-    airtableEnabled(ctx)
-      ? core.list(ctx.orgSlug, "EXECUTION_LOG", { maxRecords: 100 })
-      : db(ctx).platExecutionLog.findMany({
-          where: { orgId: ctx.orgId, targetTable: "delay_cascade" },
-          orderBy: { createdAt: "desc" },
-          take: 5,
-        }),
+    db(ctx).platExecutionLog.findMany({
+      where: { orgId: ctx.orgId, targetTable: "delay_cascade" },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
   ]);
 
   const parse = <T,>(raw: string): T | null => {
@@ -32,16 +29,8 @@ export default async function DelayCascadePage({ params }: { params: Promise<{ o
       return null;
     }
   };
-  const logs: { id: string | number; payload: string; result: string }[] = airtableEnabled(ctx)
-    ? (analyses as Array<{ id: string; [k: string]: unknown }>)
-        .filter((r) => String(r["Tables_Affected"] ?? "") === "delay_cascade")
-        .slice(0, 5)
-        .map((r) => ({
-          id: r.id,
-          payload: JSON.stringify(parse<{ input?: { trigger: string; delayDays: number } }>(String(r["Summary"] ?? ""))?.input ?? {}),
-          result: JSON.stringify(parse<{ result?: CascadeResult }>(String(r["Summary"] ?? ""))?.result ?? {}),
-        }))
-    : (analyses as Array<{ id: number; payload: string; result: string }>);
+  const logs: { id: string | number; payload: string; result: string }[] =
+    analyses as Array<{ id: number; payload: string; result: string }>;
 
   return (
     <div className="p-6 max-w-2xl">

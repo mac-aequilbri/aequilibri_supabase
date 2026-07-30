@@ -200,7 +200,7 @@ export default async function IntegrationsPage({
         <p className="text-neutral-500 mt-3 text-xs">
           {webhookSecret
             ? "The signing secret is managed in the control base for now; a rotate-from-UI control is planned."
-            : "No signing secret is set for this org yet — set one in the control base (setOrgWebhookSecret / Airtable)."}{" "}
+            : "No signing secret is set for this org yet — set one in the org registry settings (setOrgWebhookSecret)."}{" "}
           Provider credentials (OAuth tokens) live in n8n — never here.
         </p>
       </section>

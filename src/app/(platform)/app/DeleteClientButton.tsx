@@ -19,7 +19,7 @@ export function DeleteClientButton({ action, slug, name }: Props) {
         confirmLabel="Confirm — removes from registry"
         pendingLabel="Removing…"
         className="btn-ae-danger-outline"
-        title={`Removes "${name}" from the picker. Its Airtable base is NOT deleted — remove that manually in Airtable if you want it gone.`}
+        title={`Removes "${name}" from the picker. Its tenant data is NOT deleted — the org is deactivated and can be restored.`}
       />
     </form>
   );

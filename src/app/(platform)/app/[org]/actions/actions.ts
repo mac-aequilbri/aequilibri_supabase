@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { STATUS_MAP_REF_TYPE, isAppStatus, normStatusKey } from "@/lib/platform/actionStatus";
 import { formToObject } from "@/lib/platform/forms";
@@ -10,10 +9,6 @@ import { getCurrentUser, requireOrgCtx } from "@/lib/platform/org-context";
 import { orgPath } from "@/lib/platform/paths";
 import { writeRecord } from "@/lib/platform/recordWriter";
 import type { CreateFormState } from "@/components/form/CreateForm";
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
 
 export async function createActionItem(_prev: CreateFormState, formData: FormData): Promise<CreateFormState> {
   const ctx = await requireOrgCtx(String(formData.get("org") ?? ""));
@@ -64,34 +59,18 @@ export async function saveStatusMapping(formData: FormData): Promise<void> {
   if (!raw || !isAppStatus(status)) return;
   const code = normStatusKey(raw);
 
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "PLAT_CFG_REFERENCE", { maxRecords: 500 });
-    const existing = rows.find(
-      (r) => str(r["Ref_Type"]) === STATUS_MAP_REF_TYPE && str(r["Code"]) === code,
-    );
-    const fields = {
-      Name: raw,
-      Ref_Type: STATUS_MAP_REF_TYPE,
-      Code: code,
-      Value: status,
-      Is_Active: true,
-    };
-    if (existing) await core.update(ctx.orgSlug, "PLAT_CFG_REFERENCE", existing.id, fields);
-    else await core.create(ctx.orgSlug, "PLAT_CFG_REFERENCE", fields);
-  } else {
-    const existing = await db(ctx).platCfgReference.findFirst({
-      where: { orgId: ctx.orgId, type: STATUS_MAP_REF_TYPE, code },
+  const existing = await db(ctx).platCfgReference.findFirst({
+    where: { orgId: ctx.orgId, type: STATUS_MAP_REF_TYPE, code },
+  });
+  if (existing) {
+    await db(ctx).platCfgReference.update({
+      where: { id: existing.id },
+      data: { value: status, name: raw, isActive: true },
     });
-    if (existing) {
-      await db(ctx).platCfgReference.update({
-        where: { id: existing.id },
-        data: { value: status, name: raw, isActive: true },
-      });
-    } else {
-      await db(ctx).platCfgReference.create({
-        data: { orgId: ctx.orgId, type: STATUS_MAP_REF_TYPE, code, name: raw, value: status, sortOrder: 0 },
-      });
-    }
+  } else {
+    await db(ctx).platCfgReference.create({
+      data: { orgId: ctx.orgId, type: STATUS_MAP_REF_TYPE, code, name: raw, value: status, sortOrder: 0 },
+    });
   }
   revalidatePath(orgPath(ctx.orgSlug, "/actions"));
   revalidatePath(orgPath(ctx.orgSlug)); // dashboard shares the definition

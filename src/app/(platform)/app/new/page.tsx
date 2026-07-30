@@ -4,7 +4,6 @@
 
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/PageHeader";
-import { VERTICAL_TEMPLATE_BASE_IDS } from "@/lib/airtable/config";
 import { listTemplateRegistry } from "@/lib/platform/controlPlane";
 import { isPlatformAdmin } from "@/lib/platform/org-context";
 import { DEFAULT_FEATURES } from "@/lib/platform/types";
@@ -37,7 +36,8 @@ const VERTICAL_LABELS: Record<string, string> = {
   construction: "Construction (Project Delivery)",
   roofing: "Roofing (PCR Estimation)",
 };
-const VERTICALS = Object.keys(VERTICAL_TEMPLATE_BASE_IDS);
+// Built-in verticals — moved here from the retired Airtable template map.
+const VERTICALS = ["construction", "roofing"];
 
 const ENGAGEMENTS = [
   ["long_project", "Long project (phases, budget vs actual, variations)"],
@@ -61,7 +61,7 @@ export default async function NewOrganisationPage({
   const registry = await listTemplateRegistry();
   const verticalOptions = registry.length
     ? registry.map((r) => ({ value: r.recordId, label: `${r.industry} — ${r.subIndustry}`, baseId: r.templateBaseId }))
-    : VERTICALS.map((v) => ({ value: v, label: VERTICAL_LABELS[v] ?? v, baseId: VERTICAL_TEMPLATE_BASE_IDS[v] }));
+    : VERTICALS.map((v) => ({ value: v, label: VERTICAL_LABELS[v] ?? v, baseId: "" }));
 
   return (
     <main className="max-w-2xl mx-auto px-6 py-10">
@@ -80,15 +80,8 @@ export default async function NewOrganisationPage({
               body: (
         <section className="ae-card p-5 space-y-4">
           <div className="rounded border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600 space-y-1">
-            <p className="font-medium text-neutral-700">The customer&apos;s Airtable base is created automatically.</p>
-            <p>On submit, a new base is cloned from the selected industry&apos;s template. Leave the base-id field blank to auto-create; only fill it to reuse an existing base.</p>
-            <ul className="font-mono">
-              {verticalOptions.map((o) => (
-                <li key={o.value}>
-                  {o.label}: {o.baseId}
-                </li>
-              ))}
-            </ul>
+            <p className="font-medium text-neutral-700">The customer instance is provisioned in Postgres.</p>
+            <p>On submit, the organisation is registered, its configuration and seed rules are written, and the first admin is added. A dedicated tenant database can be provisioned afterwards (scripts/provision-tenant-db.mjs).</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label className="block text-sm">
@@ -117,19 +110,7 @@ export default async function NewOrganisationPage({
                 ))}
               </select>
               <span className="block mt-1 text-xs text-neutral-500">
-                Determines which Airtable template the customer&apos;s base is cloned from. Manage the list under Templates.
-              </span>
-            </label>
-            <label className="block text-sm">
-              <span className="text-neutral-600">Airtable base ID (optional)</span>
-              <input
-                name="airtableBaseId"
-                pattern="app[A-Za-z0-9]{14,}"
-                placeholder="auto-created if blank"
-                className="mt-1 w-full rounded border border-neutral-300 px-3 py-2 font-mono text-xs"
-              />
-              <span className="block mt-1 text-xs text-neutral-500">
-                Leave blank to auto-create the base from the vertical template. Provide an id only to reuse an existing base.
+                Determines the vertical (job catalog, assessment engine). Manage the list under Templates.
               </span>
             </label>
             <label className="block text-sm">
@@ -271,12 +252,9 @@ export default async function NewOrganisationPage({
               label="Provision customer instance"
               pendingTitle="Provisioning instance"
               stages={[
-                "Creating the customer's Airtable base…",
-                "Cloning the template tables…",
-                "Ensuring app runtime tables…",
-                "Checking record access…",
-                "Writing instance configuration…",
                 "Registering the organisation…",
+                "Writing instance configuration…",
+                "Seeding domain knowledge…",
               ]}
             />
           }

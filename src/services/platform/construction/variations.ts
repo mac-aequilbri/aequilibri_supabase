@@ -1,10 +1,8 @@
 // Variation orders — AI drafting with defensive JSON parsing, human approval
 // with correction capture when the approver edits the AI's numbers.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { callClaude } from "@/lib/claude";
 import { db, prisma } from "@/lib/db";
-import { VARIATION_FILTER } from "@/lib/platform/changeLog";
 import { emitCorrection } from "@/lib/platform/corrections";
 import { loadJobContext } from "@/lib/platform/jobContextSource";
 import { modelFor } from "@/lib/platform/modelRouter";
@@ -13,22 +11,8 @@ import { writeRecord, type RecordId } from "@/lib/platform/recordWriter";
 import { Actor, OrgCtx } from "@/lib/platform/types";
 import { toNum } from "@/lib/format";
 
-/** Next VO-### ref. Postgres numbers per job (max suffix + 1); Airtable numbers
- *  globally over VARIATIONS — simpler than reading each row's Job link, and the
- *  ref is only a display label (the Job link is the real association). */
+/** Next VO-### ref, numbered per job (max suffix + 1). */
 async function nextRefNumber(ctx: OrgCtx, jobId: RecordId): Promise<string> {
-  if (airtableEnabled(ctx)) {
-    // Spec 12: variations are CHANGE_LOG rows (Change_Type="Variation").
-    const rows = await core.list(ctx.orgSlug, "CHANGE_LOG", {
-      maxRecords: 500,
-      filterByFormula: VARIATION_FILTER,
-    });
-    const max = rows.reduce((m, v) => {
-      const match = /-(\d+)$/.exec(String(v["Ref_Number"] ?? ""));
-      return match ? Math.max(m, Number(match[1])) : m;
-    }, 0);
-    return `VO-${String(max + 1).padStart(3, "0")}`;
-  }
   // Max existing suffix + 1 — count-based numbering duplicates after deletes.
   const numId = Number(jobId);
   const existing = await db(ctx).platConVariationOrder.findMany({
@@ -134,29 +118,6 @@ export async function approveVariation(
   id: RecordId,
   edits: { costImpact?: number; timeImpactDays?: number } = {},
 ): Promise<void> {
-  // Airtable mode: read priors from the base, write the approval. The
-  // correction-capture learning loop stays Postgres-only (it threads numeric
-  // entity ids and writes to the corrections pipeline).
-  if (airtableEnabled(ctx)) {
-    const vo = await core.get(ctx.orgSlug, "CHANGE_LOG", String(id)).catch(() => null);
-    const finalCost = edits.costImpact ?? (vo ? toNum(vo["Impact_Cost"] as number) : 0);
-    const finalDays = edits.timeImpactDays ?? (vo ? Number(vo["Impact_Schedule_Days"]) || 0 : 0);
-    await writeRecord(ctx, {
-      table: "variation_order",
-      op: "update",
-      recordId: id,
-      data: {
-        status: "approved",
-        approvedBy: approverName,
-        approvedAt: new Date().toISOString(),
-        costImpact: finalCost,
-        timeImpactDays: finalDays,
-      },
-      actor: { type: "human", name: approverName },
-    });
-    return;
-  }
-
   const vo = await db(ctx).platConVariationOrder.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!vo) throw new Error("Variation not found");
 

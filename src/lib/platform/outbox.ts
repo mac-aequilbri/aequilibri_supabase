@@ -11,7 +11,6 @@
 //     never throws — a failed emit must never undo a completed write (mirrors
 //     the best-effort audit log in recordWriter).
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import {
   controlPlaneEnabled,
   enqueueOutbox,
@@ -102,31 +101,19 @@ export async function logIntegrationAudit(
 ): Promise<void> {
   const status = entry.status ?? "executed";
   try {
-    if (airtableEnabled(ctx)) {
-      await core.create(ctx.orgSlug, "EXECUTION_LOG", {
-        Log_Entry: entry.label.slice(0, 200),
-        Action_Type: "integration",
-        Tables_Affected: "integration",
-        Summary: entry.summary.slice(0, 800),
-        Initiated_By: "System",
-        Status: status,
-        Date_Time: new Date().toISOString(),
-      });
-    } else {
-      await db(ctx).platExecutionLog.create({
-        data: {
-          orgId: ctx.orgId,
-          actorType: "system",
-          actorName: "integration",
-          operation: "integration",
-          targetTable: "integration",
-          payload: entry.label,
-          status,
-          executedAt: new Date(),
-          result: entry.summary.slice(0, 800),
-        },
-      });
-    }
+    await db(ctx).platExecutionLog.create({
+      data: {
+        orgId: ctx.orgId,
+        actorType: "system",
+        actorName: "integration",
+        operation: "integration",
+        targetTable: "integration",
+        payload: entry.label,
+        status,
+        executedAt: new Date(),
+        result: entry.summary.slice(0, 800),
+      },
+    });
   } catch (err) {
     logger.warn("Integration audit write skipped", { orgId: ctx.orgId, ...errMeta(err) });
   }

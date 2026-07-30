@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { formToObject } from "@/lib/platform/forms";
 import { getCurrentUser, requireOrgCtx } from "@/lib/platform/org-context";
@@ -67,21 +66,12 @@ export async function escalateHighRisks(formData: FormData): Promise<void> {
       actor: { type: "human", name: user.name },
     });
 
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "RISKS", { maxRecords: 500 });
-    for (const r of rows) {
-      if (String(r["Status"] ?? "") !== "open" || r["Escalated_At"]) continue;
-      if ((Number(r["Likelihood"]) || 0) * (Number(r["Impact"]) || 0) < threshold) continue;
-      await escalate(r.id);
-    }
-  } else {
-    const risks = await db(ctx).platConRisk.findMany({
-      where: { orgId: ctx.orgId, status: "open", escalatedAt: null },
-    });
-    for (const r of risks) {
-      if (r.likelihood * r.impact < threshold) continue;
-      await escalate(r.id);
-    }
+  const risks = await db(ctx).platConRisk.findMany({
+    where: { orgId: ctx.orgId, status: "open", escalatedAt: null },
+  });
+  for (const r of risks) {
+    if (r.likelihood * r.impact < threshold) continue;
+    await escalate(r.id);
   }
   revalidatePath(orgPath(ctx.orgSlug, "/risks"));
   redirect(orgPath(ctx.orgSlug, "/risks"));

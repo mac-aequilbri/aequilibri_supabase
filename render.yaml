@@ -1,109 +1,82 @@
+# Postgres-native deployment blueprint (migration-plan Phase 6).
+#
+# NOTE (Phase 7): Render has NO Australian region — this blueprint deploys app
+# compute only; the databases MUST live in an AU region (AWS/Azure/GCP Sydney,
+# Supabase/Neon ap-southeast-2). Whether app compute may run outside AU is the
+# open at-rest-vs-processing residency question — confirm with the client
+# before going live. This file intentionally no longer matches the original
+# repo's live service.
 services:
   - type: web
-    name: aequilibri-next
+    name: aequilibri-postgres
     runtime: node
-    region: singapore       # change to your preferred region
-    plan: free              # free tier (no card needed); upgrade to starter/standard for always-on production
-    # NOTE on the build command:
-    #   --include=dev  → NODE_ENV=production (set below) makes npm skip
-    #                    devDependencies, but the build toolchain (prisma CLI,
-    #                    typescript, tailwind) lives there. Without this the
-    #                    build fails with "prisma: not found" / missing types.
-    #   prisma generate → generates the Prisma client from schema.prisma. No DB
-    #                    connection needed; the client is required at build time
-    #                    because platform code still imports it (the Postgres
-    #                    branches are just never taken when AIRTABLE_MIGRATION is
-    #                    on). No `migrate deploy` / seed: Airtable is the system
-    #                    of record, so there is no Postgres to migrate or seed.
-    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    region: singapore # nearest to AU on Render; see the Phase 7 note above
+    plan: free
+    # --include=dev → NODE_ENV=production makes npm skip devDependencies, but
+    # the build toolchain (prisma CLI, typescript, tailwind) lives there.
+    # BOTH Prisma clients are generated (tenant + control, §2b split).
+    # Migrations are applied by the release phase against BOTH databases via
+    # scripts/migrate-all-tenants.mjs (control DB → default tenant DB → every
+    # provisioned per-org tenant DB).
+    buildCommand: npm ci --include=dev && npm run db:generate && npm run build
+    preDeployCommand: node scripts/migrate-all-tenants.mjs
     startCommand: npm start
-    # Real health endpoint (config checks; ?deep=1 adds Airtable reachability).
-    # The old "/" pointer returned 200 even during a total data-layer outage.
     healthCheckPath: /api/health
-    # HARD CONSTRAINT: the rate limiter, caches, proposal claim and scheduler
-    # lock are per-process. N instances × 4.5 req/s exceeds Airtable's
-    # 5 req/s/base cap → sustained 429 outage. Do NOT raise until a shared
-    # (Redis) limiter/cache exists. This pin is the mechanical guard.
+    # HARD CONSTRAINT: the caches, proposal claim and scheduler lock are
+    # per-process (no shared Redis). Do NOT raise until that exists.
     numInstances: 1
 
     envVars:
-      # ── Data layer ─────────────────────────────────────────────────────────
-      # Airtable is the system of record (AIRTABLE_MIGRATION=true below). Every
-      # platform data source routes to Airtable; the Postgres/Prisma branches are
-      # never taken, so no DATABASE_URL / managed Postgres is provisioned. Legacy
-      # UC1 routes still talk to Prisma directly — they are not deployed here.
+      # ── Data layer (§2b: one control DB + tenant DBs) ──────────────────────
+      # DATABASE_URL         → the default/shared tenant database.
+      # CONTROL_DATABASE_URL → the control-plane database (org registry, team,
+      #                        RLS assignments, connections, outbox, catalogs).
+      # Per-org tenant databases are provisioned by scripts/provision-tenant-db.mjs
+      # and routed via the registry (settings.tenantDatabaseUrl) — no env needed.
+      - key: DATABASE_URL
+        sync: false
+      - key: CONTROL_DATABASE_URL
+        sync: false
+      # Per-org tenant client cache cap (see lib/db.ts; default 8).
+      - key: TENANT_CLIENT_CAP
+        value: "8"
 
       # ── AI (required for live responses; omit for demo mode) ───────────────
       - key: ANTHROPIC_API_KEY
         sync: false
 
-      # ── Airtable migration (system of record) ─────────────────────────────
-      # When AIRTABLE_MIGRATION=true the migrated functionalities read/write the
-      # org's Airtable base instead of Postgres. AIRTABLE_PAT is a secret and
-      # MUST be set manually in the Render dashboard (sync: false below) — it must
-      # be a token that can reach the new workspace + all three template bases.
-      # AIRTABLE_BASES is a legacy orgSlug -> baseId override; real customers get
-      # their base id stored at onboarding (PlatOrganisation.airtableBaseId), so
-      # the map is normally empty. In production an org with no resolvable base
-      # throws (no demo-base fallback).
-      - key: AIRTABLE_MIGRATION
-        value: "true"
-      - key: AIRTABLE_BASES
-        value: "{}"
-      - key: AIRTABLE_PAT
-        sync: false
-      # Spec 12 onboarding: a human duplicates the vertical template base natively
-      # in Airtable (preserves computed/rollup fields), pastes the new base id in
-      # /app/new, and the app ensures its runtime tables + registers the org. No
-      # API base-cloning on the onboarding path, so AIRTABLE_WORKSPACE_ID is only
-      # used by the deprecated provisionClientBase ops fallback.
-      # AIRTABLE_TEMPLATE_BASE_ID is the base schema-drift compares against.
-      - key: AIRTABLE_WORKSPACE_ID
-        value: "wsp0SwxU3j8IwLZJ1"
-      - key: AIRTABLE_TEMPLATE_BASE_ID
-        value: "appXfwBLE6zBEL5Zr"
-      # Control plane. controlEnabled() = AIRTABLE_MIGRATION && this — it gates
-      # the org registry, PLAT_TEAM auth, PLAT_CONNECTIONS default-deny on the
-      # inbound webhook, and PLAT_OUTBOX emission. It was set in the Render
-      # dashboard but undeclared here until 2026-07-29, so a fresh blueprint
-      # deploy would have silently come up with the whole control plane off.
-      - key: AIRTABLE_CONTROL_BASE_ID
-        value: "app51Tmrgab3QYP4Z"
-
       # ── Auth (Clerk) ────────────────────────────────────────────────────────
       # The platform FAILS CLOSED without these: /app/* returns 503 unless
       # ALLOW_DEMO_MODE=true is set. Production runs with Clerk auth ON, so both
-      # keys below MUST be set (production pk_live_/sk_live_ values) in the Render
-      # dashboard, and ALLOW_DEMO_MODE must stay UNSET — hence it is intentionally
-      # not declared here. Setting only one key is treated as misconfiguration and
-      # also fails closed (503). If you ever need an open demo deployment, add
-      # ALLOW_DEMO_MODE=true back in the dashboard.
+      # keys MUST be set (pk_live_/sk_live_) in the dashboard, and
+      # ALLOW_DEMO_MODE must stay UNSET.
       - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
         sync: false
       - key: CLERK_SECRET_KEY
         sync: false
       # Platform operators allowed to provision new orgs and see every client
-      # (comma-separated emails, e.g. mac@aequilibri.com).
+      # (comma-separated emails).
       - key: PLATFORM_ADMIN_EMAILS
         sync: false
 
       # ── Secrets at rest (AES-256-GCM key for stored OAuth tokens etc.) ─────
-      # Min 16 chars. The app refuses to encrypt under the dev fallback key in
-      # production, so this MUST be set before enabling Xero/Drive per-org.
       - key: PLATFORM_ENCRYPTION_KEY
         sync: false
 
-      # ── Automation (scheduler endpoint token; omit to disable) ─────────────
+      # ── Automation ──────────────────────────────────────────────────────────
+      # Scheduler endpoint token (omit to disable the hourly sweep).
       - key: CRON_SECRET
         sync: false
       # Inbound integration webhook (/api/platform/hooks) fallback signing
-      # secret for single-tenant/demo. Per-org secrets live in the control-base
-      # registry Settings JSON and take precedence; omit both to disable hooks.
+      # secret; per-org secrets in the registry settings take precedence.
       - key: PLATFORM_WEBHOOK_SECRET
         sync: false
+      # Outbound-event feed for the n8n delivery worker (GET/POST
+      # /api/platform/outbox); falls back to PLATFORM_WEBHOOK_SECRET.
+      - key: OUTBOX_FEED_SECRET
+        sync: false
 
-      # ── Module 2 inbox ingestion (live IMAP mailbox; omit all to use demo
-      #    fixtures). The /api/platform/ingest-inbox endpoint reuses CRON_SECRET.
+      # ── Module 2 inbox ingestion (live IMAP mailbox; omit all for fixtures) ─
       - key: IMAP_HOST
         sync: false
       - key: IMAP_PORT

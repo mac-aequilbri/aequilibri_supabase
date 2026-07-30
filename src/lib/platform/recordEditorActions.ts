@@ -7,7 +7,6 @@
 // validates, typecasts, stamps orgId, and audits — so no new write path exists.
 
 import { revalidatePath } from "next/cache";
-import { airtableEnabled } from "@/lib/airtable";
 import { callClaude } from "@/lib/claude";
 import { getCurrentUser, requireOrgCtx } from "./org-context";
 import { orgPath } from "./paths";
@@ -19,11 +18,11 @@ function str(v: unknown): string {
 }
 
 /** Coerce one submitted value to its field type, applying the same clear
- *  semantics as updateActionDetail: a blank text/date is an explicit null on
- *  Airtable (erases the cell) but "" / left-untouched on Postgres. Returns a
- *  sentinel `SKIP` for values that should not be sent at all. */
+ *  semantics as updateActionDetail: a blank text stays "" and a blank date is
+ *  left untouched. Returns a sentinel `SKIP` for values that should not be
+ *  sent at all. */
 const SKIP = Symbol("skip");
-function coerce(type: EditorFieldType, raw: string, air: boolean): unknown | typeof SKIP {
+function coerce(type: EditorFieldType, raw: string): unknown | typeof SKIP {
   switch (type) {
     case "number": {
       const t = raw.trim();
@@ -34,12 +33,10 @@ function coerce(type: EditorFieldType, raw: string, air: boolean): unknown | typ
     case "checkbox":
       return raw === "true" || raw === "on" || raw === "1";
     case "date":
-      return raw.trim() === "" ? (air ? null : SKIP) : raw.trim();
-    default: {
+      return raw.trim() === "" ? SKIP : raw.trim();
+    default:
       // text / textarea / select
-      const t = raw;
-      return t === "" ? (air ? null : "") : t;
-    }
+      return raw;
   }
 }
 
@@ -74,14 +71,13 @@ export async function updateRecordDetail(
     return { ok: false, error: "The form spec could not be read — reload and try again." };
   }
 
-  const air = airtableEnabled(ctx);
   const data: Record<string, unknown> = {};
   for (const f of spec) {
     if (f.readOnly) continue;
     // A checkbox that's unchecked posts nothing — treat absence as "false".
     const present = formData.has(f.name);
     const raw = f.type === "checkbox" ? (present ? "true" : "false") : str(formData.get(f.name));
-    const value = coerce(f.type, raw, air);
+    const value = coerce(f.type, raw);
     if (value !== SKIP) data[f.name] = value;
   }
 

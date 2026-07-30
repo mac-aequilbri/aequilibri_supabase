@@ -8,7 +8,6 @@
 // phases, which the next derivation reads — so learnings improve without any
 // extra bookkeeping.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { OrgCtx } from "@/lib/platform/types";
 
@@ -31,64 +30,6 @@ export async function derivePhaseTemplate(
   ctx: OrgCtx,
   opts: { engagementType: string; category?: string },
 ): Promise<PhaseTemplate | null> {
-  if (airtableEnabled(ctx)) {
-    // Airtable JOBS does not carry engagementType/category metadata. Keep the
-    // same-category safeguard (return null) and otherwise derive from prior
-    // saved phases across jobs.
-    if (opts.category) return null;
-    const [jobs, phases] = await Promise.all([
-      core.list(ctx.orgSlug, "JOBS", { maxRecords: 500 }),
-      core.list(ctx.orgSlug, "PHASES", { maxRecords: 2000 }),
-    ]);
-    const byJob = new Map<string, { name: string; conPhases: { name: string }[] }>();
-    for (const j of jobs) byJob.set(j.id, { name: String(j["Job_Name"] ?? ""), conPhases: [] });
-    for (const p of phases) {
-      if (p["Is_AI_Draft"] === true) continue;
-      const links = Array.isArray(p["Job"]) ? (p["Job"] as unknown[]) : [];
-      for (const link of links) {
-        const job = byJob.get(String(link));
-        if (job) job.conPhases.push({ name: String(p["Phase_Name"] ?? "") });
-      }
-    }
-    const learned = [...byJob.values()].filter((j) => j.conPhases.length > 0);
-    if (learned.length === 0) return null;
-    if (learned.length < 3) {
-      const recent = learned[0];
-      const seen = new Set<string>();
-      const phasesOut: { name: string }[] = [];
-      for (const p of recent.conPhases) {
-        const key = norm(p.name);
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        phasesOut.push({ name: p.name });
-      }
-      return { phases: phasesOut, sampleCount: learned.length, sourceJobCodes: [recent.name] };
-    }
-    const stats = new Map<string, { display: string; jobs: number; posSum: number }>();
-    for (const job of learned) {
-      const seen = new Set<string>();
-      job.conPhases.forEach((p, idx) => {
-        const key = norm(p.name);
-        if (!key || seen.has(key)) return;
-        seen.add(key);
-        const s = stats.get(key) ?? { display: p.name, jobs: 0, posSum: 0 };
-        s.jobs += 1;
-        s.posSum += idx;
-        stats.set(key, s);
-      });
-    }
-    const threshold = Math.ceil(learned.length / 2);
-    const kept = [...stats.values()]
-      .filter((s) => s.jobs >= threshold)
-      .sort((a, b) => a.posSum / a.jobs - b.posSum / b.jobs);
-    if (kept.length === 0) return null;
-    return {
-      phases: kept.map((s) => ({ name: s.display })),
-      sampleCount: learned.length,
-      sourceJobCodes: learned.map((j) => j.name).slice(0, 5),
-    };
-  }
-
   const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId, engagementType: opts.engagementType },
     orderBy: { createdAt: "desc" },

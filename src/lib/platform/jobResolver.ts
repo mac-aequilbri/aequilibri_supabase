@@ -13,14 +13,13 @@
 // The matching itself (matchJobByName) is pure and covered by unit tests; the
 // resolver around it is the only part that touches a backend.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import type { RecordId } from "@/lib/platform/recordWriter";
 import type { OrgCtx } from "@/lib/platform/types";
 
-/** A project the resolver may match against. `id` is the backend's own id — an
- *  Airtable "rec…" string or a stringified Postgres integer. */
+/** A project the resolver may match against. `id` is a stringified Postgres
+ *  integer. */
 export interface JobCandidate {
   id: string;
   name: string;
@@ -163,23 +162,10 @@ export function matchJobByName(candidates: JobCandidate[], text: string): NameMa
 
 /** Ceiling on how many projects one resolution will scan. Orgs with more than
  *  this (the legal demo carries ~3000 matters) are matched against a prefix
- *  only — logged, never silent, because a miss looks identical to "no match". */
+ *  only. */
 const JOB_SCAN_CAP = 1000;
 
 async function loadJobCandidates(ctx: OrgCtx): Promise<JobCandidate[]> {
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "JOBS", { maxRecords: JOB_SCAN_CAP });
-    if (rows.length >= JOB_SCAN_CAP) {
-      logger.warn("Job resolution scanned a truncated project list", {
-        orgSlug: ctx.orgSlug,
-        cap: JOB_SCAN_CAP,
-      });
-    }
-    return rows.map((r) => ({
-      id: r.id,
-      name: typeof r["Job_Name"] === "string" ? r["Job_Name"] : "",
-    }));
-  }
   const rows = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId },
     orderBy: { id: "asc" },
@@ -195,14 +181,11 @@ async function loadJobCandidates(ctx: OrgCtx): Promise<JobCandidate[]> {
   });
 }
 
-/** The project a known sender implies. Postgres only: PlatJob.clientContactId
- *  links a job to a contact, so an email from that contact points at the job.
- *  The canonical Airtable schema has no CONTACTS↔JOBS link in either direction
- *  (CONTACTS links to ORGANISATIONS, JOBS to TEAM), so this rung is skipped
- *  there rather than faked. */
+/** The project a known sender implies: PlatJob.clientContactId links a job to
+ *  a contact, so an email from that contact points at the job. */
 async function jobFromSender(ctx: OrgCtx, sender: string): Promise<JobCandidate | null> {
   const email = sender.match(/[^\s<>"]+@[^\s<>"]+/)?.[0]?.toLowerCase();
-  if (!email || airtableEnabled(ctx)) return null;
+  if (!email) return null;
 
   const contact = await db(ctx).platContact.findFirst({
     where: { orgId: ctx.orgId, email: { equals: email, mode: "insensitive" } },
@@ -222,7 +205,7 @@ async function jobFromSender(ctx: OrgCtx, sender: string): Promise<JobCandidate 
 
 /** The org's General project — the shared bucket that every member can see.
  *  Set at provisioning (config.generalJobId); falls back to a name lookup for
- *  orgs provisioned before that, and for Postgres orgs which have no rec id. */
+ *  orgs provisioned before that. */
 function findGeneralJob(ctx: OrgCtx, candidates: JobCandidate[]): JobCandidate | null {
   // config is optional-chained: callers deep in the ingestion path build a ctx
   // from a webhook payload, and it isn't guaranteed to carry org settings.
@@ -235,8 +218,8 @@ function findGeneralJob(ctx: OrgCtx, candidates: JobCandidate[]): JobCandidate |
   return candidates.find((c) => norm(c.name) === "general") ?? null;
 }
 
-/** An Airtable id stays a string; a Postgres id goes back to a number, because
- *  that is what the write schemas and the pending-write Int column expect. */
+/** A numeric id goes back to a number, because that is what the write schemas
+ *  and the pending-write Int column expect. */
 function toRecordId(id: string): RecordId {
   return /^\d+$/.test(id) ? Number(id) : id;
 }

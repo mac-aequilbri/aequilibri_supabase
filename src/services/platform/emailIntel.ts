@@ -10,7 +10,6 @@
 // approval path downstream are untouched. Every suggestion is still a proposal;
 // nothing here writes.
 
-import { airtableEnabled } from "@/lib/airtable";
 import { callClaude } from "@/lib/claude";
 import { logger } from "@/lib/logger";
 import {
@@ -302,9 +301,6 @@ export async function extractEmailIntents(
   for (const intent of parseIntents(res.content)) {
     if (suggestions.length >= MAX_INTENTS) break;
     if (intent.confidence < MIN_CONFIDENCE) continue;
-    // CASHFLOWS is Airtable-only — it has no Postgres write delegate and would
-    // throw at execution time, so a Postgres org never sees the suggestion.
-    if (intent.table === "cashflow" && !airtableEnabled(ctx)) continue;
 
     const payload = payloadFor(intent, input.jobId, sender, todayPeriod);
     if (!payload) continue;

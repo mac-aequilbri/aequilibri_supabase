@@ -14,11 +14,6 @@ const h = vi.hoisted(() => ({
   markProcessed: vi.fn(),
 }));
 
-vi.mock("@/lib/airtable", () => ({
-  airtableEnabled: () => false,
-  core: { list: vi.fn(), get: vi.fn() },
-}));
-
 vi.mock("@/lib/db", () => {
   const client = {
     platDocument: { findFirst: h.docFindFirst, findMany: h.docFindMany },

@@ -4,7 +4,6 @@ import type { OrgCtx } from "@/lib/platform/types";
 const h = vi.hoisted(() => ({ callClaude: vi.fn() }));
 
 vi.mock("@/lib/claude", () => ({ callClaude: h.callClaude }));
-vi.mock("@/lib/airtable", () => ({ airtableEnabled: () => false, core: {} }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 vi.mock("@/lib/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn() }, errMeta: () => ({}) }));
 
@@ -120,23 +119,18 @@ describe("extractEmailIntents — refusing bad output", () => {
   });
 });
 
-describe("extractEmailIntents — backend and money guards", () => {
-  it("never proposes cashflow on a Postgres org (no write delegate)", async () => {
-    replies({ intents: [{ table: "cashflow", confidence: 0.95, fields: { name: "Invoice 12", amount: 4200 } }] });
-    expect(await extractEmailIntents(ctx, input)).toEqual([]);
-  });
-
-  it("never marks money as paid off an email", async () => {
-    vi.doMock("@/lib/airtable", () => ({ airtableEnabled: () => true, core: {} }));
-    vi.resetModules();
-    const { extractEmailIntents: fn } = await import("./emailIntel");
+describe("extractEmailIntents — money guards", () => {
+  it("never marks money as paid off an email (status forced to Forecast)", async () => {
     replies({
       intents: [{ table: "cashflow", confidence: 0.95, fields: { name: "Invoice 12", amount: 4200, status: "Paid" } }],
     });
-    const [s] = await fn(ctx, input);
+    const [s] = await extractEmailIntents(ctx, input);
     expect(s.payload).toMatchObject({ amount: 4200, status: "Forecast" });
-    vi.doUnmock("@/lib/airtable");
-    vi.resetModules();
+  });
+
+  it("drops a cashflow intent with no positive amount", async () => {
+    replies({ intents: [{ table: "cashflow", confidence: 0.95, fields: { name: "Invoice 12" } }] });
+    expect(await extractEmailIntents(ctx, input)).toEqual([]);
   });
 });
 

@@ -1,18 +1,14 @@
-// Procurement data source — Postgres (default) or the Airtable PROCUREMENT
-// table when AIRTABLE_MIGRATION is enabled. Status values match the app's;
-// writes use the client's typecast so any missing select option is created.
+// Procurement data source — Postgres. Status values match the app's.
 //
 // Spec 12 PROCUREMENT: Procurement_Name · Quantity · Unit_Cost · Supplier(link)
-// · Budget_Category(link) · Status · Job. Total_Cost is a formula in Airtable
-// (Quantity × Unit_Cost); we compute it app-side. budgetActuals() derives the
-// BUDGET.Actual rollup app-side (sum of linked procurement where invoiced/paid).
+// · Budget_Category(link) · Status · Job. Total_Cost is computed app-side.
+// budgetActuals() derives the BUDGET.Actual rollup app-side (sum of linked
+// procurement where invoiced/paid).
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
-import { loadJobLabelMap } from "./jobOptionsSource";
 import { recordInScope, scopeByJob } from "./rls";
-import { mulMoney, sumMoney } from "./money";
+import { sumMoney } from "./money";
 import { dateInput, type EditorValues } from "./recordEditor";
 import type { OrgCtx } from "./types";
 
@@ -36,8 +32,8 @@ export interface ProcurementView {
   /** True when the order is behind its expected date and not yet closed out. */
   isLate: boolean;
   status: string;
-  /** Airtable rec id of the linked BUDGET row (Airtable mode only), for
-   *  computing BUDGET.Actual app-side; null in Postgres mode / when unlinked. */
+  /** Id of the linked BUDGET row, for computing BUDGET.Actual app-side;
+   *  null on Postgres / when unlinked. */
   budgetCategoryId: string | null;
 }
 
@@ -94,16 +90,6 @@ export function budgetActuals(rows: ProcurementView[]): Map<string, number> {
   return out;
 }
 
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-function num(v: unknown): number {
-  return typeof v === "number" ? v : 0;
-}
-function firstLink(v: unknown): string | null {
-  return Array.isArray(v) && v.length > 0 ? String(v[0]) : null;
-}
-
 async function fromPostgres(ctx: OrgCtx): Promise<ProcurementView[]> {
   const rows = await db(ctx).platConProcurement.findMany({
     where: { orgId: ctx.orgId },
@@ -130,66 +116,15 @@ async function fromPostgres(ctx: OrgCtx): Promise<ProcurementView[]> {
   });
 }
 
-async function fromAirtable(ctx: OrgCtx): Promise<ProcurementView[]> {
-  const [rows, jobLabels] = await Promise.all([
-    core.list(ctx.orgSlug, "PROCUREMENT", { maxRecords: 200 }),
-    loadJobLabelMap(ctx),
-  ]);
-  return rows.map((r) => {
-    const qty = num(r["Quantity"]);
-    const expected = str(r["Expected_Date"]) || null;
-    const actual = str(r["Actual_Date"]) || null;
-    const status = str(r["Status"]) || "Ordered";
-    const { deltaDays, isLate } = procurementLateness(expected, actual, status);
-    const jobRec = firstLink(r["Job"]);
-    return {
-      id: r.id,
-      item: str(r["Procurement_Name"]) || "(untitled item)",
-      jobCode: jobRec ? (jobLabels.get(jobRec) ?? null) : null,
-      jobId: jobRec,
-      // Supplier is a link to ORGANISATIONS, not a text field — left blank here
-      // (resolving the link to a name is out of scope for this pass).
-      vendorName: "",
-      qty,
-      total: mulMoney(qty, num(r["Unit_Cost"])), // Total_Cost formula, computed app-side
-      dueDate: expected,
-      actualDate: actual,
-      deltaDays,
-      isLate,
-      status,
-      budgetCategoryId: firstLink(r["Budget_Category"]),
-    };
-  });
-}
-
-/** Load procurement orders from whichever backend is active. */
+/** Load procurement orders. */
 export async function loadProcurement(ctx: OrgCtx): Promise<ProcurementView[]> {
-  const rows = await (airtableEnabled(ctx) ? fromAirtable(ctx) : fromPostgres(ctx));
+  const rows = await fromPostgres(ctx);
   return scopeByJob(ctx, rows, (o) => o.jobId);
 }
 
 /** Form-ready values for a single order's edit page. Status is lower-cased to
- *  match the app's select vocabulary (a migrated base may store "Ordered").
- *  Fields are limited to what the Airtable field map persists (Supplier /
- *  Budget_Category links and the Total_Cost formula are not editable here). */
+ *  match the app's select vocabulary (a migrated base may store "Ordered"). */
 export async function loadProcurementDetail(ctx: OrgCtx, id: string): Promise<EditorValues | null> {
-  if (airtableEnabled(ctx)) {
-    let r: Record<string, unknown> | null = null;
-    try {
-      r = await core.get(ctx.orgSlug, "PROCUREMENT", id);
-    } catch {
-      return null;
-    }
-    if (!r) return null;
-    if (!(await recordInScope(ctx, r))) return null;
-    return {
-      item: str(r["Procurement_Name"]),
-      qty: num(r["Quantity"]) || 1,
-      unitPrice: num(r["Unit_Cost"]),
-      status: (str(r["Status"]) || "pending").toLowerCase(),
-      dueDate: dateInput(str(r["Expected_Date"]) || null),
-    };
-  }
   const o = await db(ctx).platConProcurement.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!o) return null;
   if (!(await recordInScope(ctx, o))) return null;

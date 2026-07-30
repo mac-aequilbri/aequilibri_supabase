@@ -20,7 +20,7 @@ export default async function TemplateRegistryPage() {
     <main className="max-w-3xl mx-auto px-6 py-10">
       <PageHeader
         title="Industry templates"
-        subtitle="Industry → sub-industry → Airtable template base. Add a mapping (after building its template base) to make a new industry onboardable — no deploy."
+        subtitle="Industry → sub-industry → vertical mapping for onboarding (job catalog + assessment engine). Legacy Airtable template base ids are retained for reference only."
         actions={[
           { href: "/app/templates/new", label: "+ New mapping" },
           { href: "/app", label: "Back to organisations", variant: "outline" },
@@ -29,7 +29,7 @@ export default async function TemplateRegistryPage() {
 
       {rows.length === 0 ? (
         <p className="text-sm text-neutral-600">
-          No mappings yet. Add one, or run <code>scripts/airtable-add-template-registry.mjs</code> to seed the defaults.
+          No mappings yet — add one to make a new industry onboardable.
         </p>
       ) : (
         <div className="ae-card overflow-x-auto">

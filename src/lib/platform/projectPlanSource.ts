@@ -1,4 +1,3 @@
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { scopeByJob } from "./rls";
 import {
@@ -29,21 +28,6 @@ export interface ProjectPlanWorkstreamView {
   priority: PriorityBand;
   attentionReason: string;
   actions: ProjectPlanActionView[];
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
-function dateOrNull(v: unknown): Date | null {
-  const raw = str(v);
-  if (!raw) return null;
-  const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function linksTo(v: unknown, recordId: string): boolean {
-  return Array.isArray(v) && v.some((x) => String(x) === recordId);
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<ProjectPlanWorkstreamView[]> {
@@ -104,68 +88,7 @@ async function fromPostgres(ctx: OrgCtx): Promise<ProjectPlanWorkstreamView[]> {
   }));
 }
 
-async function fromAirtable(ctx: OrgCtx): Promise<ProjectPlanWorkstreamView[]> {
-  const [jobs, phases, actions, risks] = await Promise.all([
-    core.list(ctx.orgSlug, "JOBS", { maxRecords: 500 }),
-    core.list(ctx.orgSlug, "PHASES", { maxRecords: 1000 }),
-    core.list(ctx.orgSlug, "ISSUES", { maxRecords: 500 }),
-    core.list(ctx.orgSlug, "RISKS", { maxRecords: 500 }),
-  ]);
-
-  return jobs.map((j) => {
-    const jobPhases = phases
-      .filter((p) => linksTo(p["Job"], j.id))
-      .sort((a, b) => Number(a["Sort_Order"] ?? 0) - Number(b["Sort_Order"] ?? 0));
-    const nextPhase = jobPhases.find((p) => str(p["Status"]) !== "complete");
-
-    const jobActions = actions
-      .filter((a) => linksTo(a["Job"], j.id))
-      .slice(0, 10)
-      .map((a) => ({
-        id: a.id,
-        title: str(a["Action_Name"]) || "(action)",
-        owner: str(a["Assigned_To"]),
-        dueDate: dateOrNull(a["Due_Date"]),
-        status: str(a["Status"]) || "open",
-      }));
-    const jobRiskScore = risks
-      .filter((r) => linksTo(r["Job"], j.id))
-      .reduce((max, r) => {
-        const score = Number(r["Likelihood"] ?? 0) * Number(r["Impact"] ?? 0);
-        return Math.max(max, score);
-      }, 0);
-
-    let priority: PriorityBand = "LOW";
-    let attentionReason = "";
-    for (const action of jobActions) {
-      if (action.status === "done" || action.status === "closed" || action.status === "deferred") continue;
-      const band = priorityBandForActionDueDate(action.dueDate);
-      if (band !== "LOW" && !attentionReason) attentionReason = "Action due date pressure";
-      priority = strongerBand(priority, band);
-    }
-    if (jobRiskScore > 0) {
-      const riskBand = priorityBandForRiskScore(jobRiskScore);
-      if (!attentionReason && riskBand !== "LOW") attentionReason = `Risk exposure (${jobRiskScore})`;
-      priority = strongerBand(priority, riskBand);
-    }
-
-    return {
-      id: j.id,
-      jobId: j.id,
-      name: str(j["Job_Name"]) || "(job)",
-      status: str(j["Status"]) || "active",
-      description: str(j["Description"]),
-      milestone: nextPhase ? str(nextPhase["Phase_Name"]) : "",
-      lastUpdated: dateOrNull(j["Last_Updated"]) ?? dateOrNull(j["Date_Completed"]),
-      jobCode: "",
-      priority,
-      attentionReason,
-      actions: jobActions,
-    };
-  });
-}
-
 export async function loadProjectPlan(ctx: OrgCtx): Promise<ProjectPlanWorkstreamView[]> {
-  const rows = await (airtableEnabled(ctx) ? fromAirtable(ctx) : fromPostgres(ctx));
+  const rows = await fromPostgres(ctx);
   return scopeByJob(ctx, rows, (r) => r.jobId);
 }

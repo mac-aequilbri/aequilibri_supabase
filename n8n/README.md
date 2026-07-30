@@ -5,6 +5,21 @@ plan live in [`docs/n8n-automation-plan.md`](../docs/n8n-automation-plan.md).
 
 Instance: `https://aequilibri.app.n8n.cloud`.
 
+> **2026-07-30 — Postgres migration (plan Phase 6).** The Airtable backend is decommissioned; the
+> outbound queue lives in the platform's control DATABASE. The outbound workflow no longer polls
+> Airtable's `PLAT_OUTBOX` table — it polls the app's authenticated feed:
+>
+> - `GET  /api/platform/outbox` — pending events (JSON `{ events: [...] }`, oldest first, ids are
+>   Postgres numeric ids as strings)
+> - `POST /api/platform/outbox` — `{ id, status: "delivered"|"failed", error? }`
+> - Auth: `Authorization: Bearer <OUTBOX_FEED_SECRET>` (falls back to `PLATFORM_WEBHOOK_SECRET`).
+>   Set `OUTBOX_FEED_SECRET` as an n8n **Variable** (`$vars`, NOT `$env` — n8n Cloud) and in the
+>   app's environment.
+>
+> The Airtable credential and control-base references below are HISTORICAL — kept for context until
+> the demo walkthrough is re-verified against the feed. Inbound workflows are unchanged (they call
+> the app's webhook, which has been Postgres-native since Phase 3).
+
 | File | Purpose |
 | --- | --- |
 | `demo-sunridge-inbound.json` | Demo: read email from `mac@aequilibri` into the platform as org `sunridge`. |

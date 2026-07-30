@@ -1,7 +1,6 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { VERTICAL_TEMPLATE_BASE_IDS } from "@/lib/airtable/config";
 import { getTemplateRegistryEntry } from "@/lib/platform/controlPlane";
 import { clerkEnabled } from "@/lib/platform/authConfig";
 import { normalizeTeamRole, type TeamRole } from "@/lib/platform/module1Governance";
@@ -10,7 +9,8 @@ import { provisionOrganisation } from "@/services/platform/onboarding";
 
 const ENGAGEMENT_TYPES: EngagementType[] = ["short_job", "long_project", "ongoing", "seasonal"];
 const AUTHORITIES: AiAuthority[] = ["propose_only", "approve_required", "auto_low_risk"];
-const VERTICALS = Object.keys(VERTICAL_TEMPLATE_BASE_IDS);
+// Built-in verticals — moved here from the retired Airtable template map.
+const VERTICALS = ["construction", "roofing"];
 
 export async function provisionOrgAction(formData: FormData): Promise<void> {
   const { isPlatformAdmin } = await import("@/lib/platform/org-context");
@@ -65,31 +65,27 @@ export async function provisionOrgAction(formData: FormData): Promise<void> {
     adminName = adminName.trim() || user?.fullName || adminEmail.split("@")[0] || "Admin";
   }
 
-  // Resolve the selected industry option. A registry recordId ("rec…") resolves
-  // to its vertical key + template base; a bare vertical key is the fallback
-  // when the registry is empty (template then resolved by the hardcoded map).
+  // Resolve the selected industry option. A registry record id resolves to its
+  // vertical key + industry labels; a bare vertical key is the fallback when
+  // the registry is empty.
   const option = String(formData.get("templateOption") ?? "");
   let vertical = VERTICALS[0];
-  let templateBaseId = "";
   let industryLabel = "";
   let subIndustryLabel = "";
-  if (option.startsWith("rec")) {
+  if (VERTICALS.includes(option)) {
+    vertical = option;
+  } else if (option) {
     const entry = await getTemplateRegistryEntry(option);
     if (!entry) redirect(`/app/new?error=${encodeURIComponent("Selected industry mapping not found — refresh and retry.")}`);
     vertical = entry.verticalKey || VERTICALS[0];
-    templateBaseId = entry.templateBaseId;
     industryLabel = entry.industry;
     subIndustryLabel = entry.subIndustry;
-  } else if (VERTICALS.includes(option)) {
-    vertical = option;
   }
 
   const result = await provisionOrganisation({
     slug: String(formData.get("slug") ?? ""),
     name: String(formData.get("name") ?? ""),
     vertical,
-    templateBaseId: templateBaseId || undefined,
-    airtableBaseId: String(formData.get("airtableBaseId") ?? ""),
     defaultEngagementType: (ENGAGEMENT_TYPES.includes(defaultEngagementType as EngagementType)
       ? defaultEngagementType
       : "long_project") as EngagementType,

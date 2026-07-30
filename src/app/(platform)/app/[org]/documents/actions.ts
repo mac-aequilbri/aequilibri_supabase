@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { airtableEnabled } from "@/lib/airtable";
 import { getCurrentUser, requireOrgCtx } from "@/lib/platform/org-context";
 import { orgPath } from "@/lib/platform/paths";
 import { recordIdParam } from "@/lib/platform/recordWriter";
@@ -35,7 +34,7 @@ export async function uploadDocument(_prev: CreateFormState, formData: FormData)
     if (file.size > MAX_UPLOAD_BYTES) {
       return { error: "Couldn't save — the file is too large (max 5 MB). Nothing was recorded." };
     }
-    const jobCode = !airtableEnabled(ctx) && typeof jobId === "number"
+    const jobCode = typeof jobId === "number"
       ? (await db(ctx).platJob.findFirst({ where: { id: jobId, orgId: ctx.orgId }, select: { code: true } }))?.code
       : undefined;
     try {

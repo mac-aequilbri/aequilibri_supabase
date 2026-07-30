@@ -3,10 +3,8 @@
 // correct whenever lines change, so the UI never has to. Quotes can be
 // generated from the job's assessment budget breakdown (the common path) or
 // built line by line. Status lifecycle: draft → sent → accepted/rejected
-// (or expired). Every write goes through the audited recordWriter, which
-// routes to Airtable or Postgres behind AIRTABLE_MIGRATION.
+// (or expired). Every write goes through the audited recordWriter.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
 import { loadJobContext } from "@/lib/platform/jobContextSource";
@@ -23,61 +21,28 @@ import {
 
 export type QuoteStatus = "draft" | "sent" | "accepted" | "rejected" | "expired";
 
-const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
-
-/** The lines belonging to a quote, in Airtable mode (linked by the Quote field).
- *  Airtable can't filter by linked-record id in a formula, so we read and match
- *  in app — fine at quote-line volumes. */
-async function airtableQuoteLines(
-  ctx: OrgCtx,
-  quoteId: RecordId,
-): Promise<Array<Record<string, unknown>>> {
-  const rows = await core.list(ctx.orgSlug, "QUOTE_LINES", { maxRecords: 500 });
-  const qid = String(quoteId);
-  return rows.filter((r) => Array.isArray(r["Quote"]) && (r["Quote"] as string[]).includes(qid));
-}
-
 /** Next QUO-### code for this org (max existing suffix + 1). */
 async function nextQuoteRef(ctx: OrgCtx): Promise<string> {
-  let max = 0;
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "QUOTES", { maxRecords: 500 });
-    for (const r of rows) {
-      const m = /^QUO-(\d+)$/.exec(String(r["Ref_Number"] ?? ""));
-      if (m) max = Math.max(max, Number(m[1]));
-    }
-  } else {
-    const quotes = await db(ctx).platConQuote.findMany({
-      where: { orgId: ctx.orgId },
-      select: { refNumber: true },
-    });
-    max = quotes.reduce((m, q) => {
-      const match = /^QUO-(\d+)$/.exec(q.refNumber);
-      return match ? Math.max(m, Number(match[1])) : m;
-    }, 0);
-  }
+  const quotes = await db(ctx).platConQuote.findMany({
+    where: { orgId: ctx.orgId },
+    select: { refNumber: true },
+  });
+  const max = quotes.reduce((m, q) => {
+    const match = /^QUO-(\d+)$/.exec(q.refNumber);
+    return match ? Math.max(m, Number(match[1])) : m;
+  }, 0);
   return `QUO-${String(max + 1).padStart(3, "0")}`;
 }
 
 /** Recompute subtotal / GST / total from the quote's lines and persist them. */
 export async function recalcQuoteTotals(ctx: OrgCtx, quoteId: RecordId): Promise<void> {
-  let subtotal: number;
-  let gstRate: number;
-  if (airtableEnabled(ctx)) {
-    const lines = await airtableQuoteLines(ctx, quoteId);
-    subtotal = sumMoney(lines.map((l) => num(l["Line_Total"])));
-    const quote = await core.get(ctx.orgSlug, "QUOTES", String(quoteId)).catch(() => null);
-    if (!quote) return;
-    gstRate = num(quote["GST_Rate"]) || 10;
-  } else {
-    const quote = await db(ctx).platConQuote.findFirst({
-      where: { id: Number(quoteId), orgId: ctx.orgId },
-      include: { lines: true },
-    });
-    if (!quote) return;
-    subtotal = sumMoney(quote.lines.map((l) => l.lineTotal));
-    gstRate = toNum(quote.gstRate);
-  }
+  const quote = await db(ctx).platConQuote.findFirst({
+    where: { id: Number(quoteId), orgId: ctx.orgId },
+    include: { lines: true },
+  });
+  if (!quote) return;
+  const subtotal = sumMoney(quote.lines.map((l) => l.lineTotal));
+  const gstRate = toNum(quote.gstRate);
   const gstAmount = mulMoney(subtotal, gstRate / 100);
   const total = sumMoney([subtotal, gstAmount]);
   await writeRecord(ctx, {
@@ -268,12 +233,8 @@ export interface QuoteLineInput {
   unitPrice: number;
 }
 
-/** Highest existing line sort-order for a quote, in either backend. */
+/** Highest existing line sort-order for a quote. */
 async function nextLineSortOrder(ctx: OrgCtx, quoteId: RecordId): Promise<number> {
-  if (airtableEnabled(ctx)) {
-    const lines = await airtableQuoteLines(ctx, quoteId);
-    return lines.reduce((m, l) => Math.max(m, num(l["Sort_Order"])), 0) + 1;
-  }
   const last = await db(ctx).platConQuoteLine.findFirst({
     where: { quoteId: Number(quoteId) },
     orderBy: { sortOrder: "desc" },
@@ -364,20 +325,13 @@ export async function setQuoteStatus(
     actor: { type: "human", name: userName },
   });
   if (status === "sent") {
-    const linkedJobId = airtableEnabled(ctx)
-      ? (await core.get(ctx.orgSlug, "QUOTES", String(quoteId)).catch(() => null))?.["Job"]
-      : (
-          await db(ctx).platConQuote.findFirst({
-            where: { id: Number(quoteId), orgId: ctx.orgId },
-            select: { jobId: true },
-          })
-        )?.jobId;
-    const jobId =
-      Array.isArray(linkedJobId) && linkedJobId.length > 0
-        ? String(linkedJobId[0])
-        : typeof linkedJobId === "number"
-          ? linkedJobId
-          : undefined;
+    const linkedJobId = (
+      await db(ctx).platConQuote.findFirst({
+        where: { id: Number(quoteId), orgId: ctx.orgId },
+        select: { jobId: true },
+      })
+    )?.jobId;
+    const jobId = typeof linkedJobId === "number" ? linkedJobId : undefined;
     const detail = await loadQuoteDetail(ctx, String(quoteId));
     if (detail) {
       const lines = detail.lines

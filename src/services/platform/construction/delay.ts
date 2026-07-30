@@ -3,7 +3,6 @@
 // (logged, not persisted as entities).
 
 import { callClaude } from "@/lib/claude";
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { loadJobContext } from "@/lib/platform/jobContextSource";
 import { modelFor } from "@/lib/platform/modelRouter";
@@ -80,35 +79,23 @@ export async function analyzeDelayCascade(
     }
   }
 
-  if (airtableEnabled(ctx)) {
-    await core.create(ctx.orgSlug, "EXECUTION_LOG", {
-      Log_Entry: "delay_cascade analysis",
-      Action_Type: "generate",
-      Tables_Affected: "delay_cascade",
-      Summary: JSON.stringify({ input: { trigger, delayDays, by: userName }, result }).slice(0, 90000),
-      Initiated_By: "AI",
-      Status: "executed",
-      Date_Time: new Date().toISOString(),
-    }).catch(() => {});
-  } else {
-    await db(ctx).platExecutionLog
-      .create({
-        data: {
-          orgId: ctx.orgId,
-          jobId: typeof jobId === "number" ? jobId : null,
-          actorType: "ai",
-          actorName: "Delay Analyst",
-          operation: "generate",
-          targetTable: "delay_cascade",
-          payload: JSON.stringify({ trigger, delayDays, by: userName }),
-          result: JSON.stringify(result).slice(0, 4000),
-          status: "executed",
-          executedAt: new Date(),
-          promptVersion: version,
-        },
-      })
-      .catch(() => {});
-  }
+  await db(ctx).platExecutionLog
+    .create({
+      data: {
+        orgId: ctx.orgId,
+        jobId: typeof jobId === "number" ? jobId : null,
+        actorType: "ai",
+        actorName: "Delay Analyst",
+        operation: "generate",
+        targetTable: "delay_cascade",
+        payload: JSON.stringify({ trigger, delayDays, by: userName }),
+        result: JSON.stringify(result).slice(0, 4000),
+        status: "executed",
+        executedAt: new Date(),
+        promptVersion: version,
+      },
+    })
+    .catch(() => {});
 
   return result;
 }

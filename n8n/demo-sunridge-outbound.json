@@ -1,5 +1,5 @@
 {
-  "name": "DEMO sunridge · outbound PLAT_OUTBOX → mac@aequilibri",
+  "name": "DEMO sunridge · outbound queue → mac@aequilibri",
   "nodes": [
     {
       "parameters": {
@@ -29,87 +29,112 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://api.airtable.com/v0/app51Tmrgab3QYP4Z/PLAT_OUTBOX",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "airtableTokenApi",
-        "sendQuery": true,
-        "queryParameters": {
+        "url": "https://aequilibri-next.onrender.com/api/platform/outbox",
+        "sendHeaders": true,
+        "headerParameters": {
           "parameters": [
             {
-              "name": "filterByFormula",
-              "value": "AND({Status}='pending',{Org_Slug}='sunridge')"
-            },
-            {
-              "name": "pageSize",
-              "value": "10"
+              "name": "Authorization",
+              "value": "=Bearer {{ $vars.OUTBOX_FEED_SECRET }}"
             }
           ]
         },
         "options": {}
       },
       "id": "c1000000-0000-4000-8000-000000000002",
-      "name": "Fetch pending outbox rows",
+      "name": "Fetch pending outbox events",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [-20, 60]
     },
     {
       "parameters": {
-        "fieldToSplitOut": "records",
+        "fieldToSplitOut": "events",
         "options": {}
       },
       "id": "c1000000-0000-4000-8000-000000000003",
-      "name": "Split out records",
+      "name": "Split out events",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [200, 60]
     },
     {
       "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.orgSlug }}",
+              "rightValue": "sunridge",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c1000000-0000-4000-8000-000000000007",
+      "name": "Only sunridge events",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [400, 60]
+    },
+    {
+      "parameters": {
         "resource": "message",
         "operation": "send",
         "sendTo": "mac@aequilibri.com",
-        "subject": "=[aequilibri · sunridge] {{ $json.fields.Event }}",
+        "subject": "=[aequilibri · sunridge] {{ $json.event }}",
         "emailType": "text",
-        "message": "={{ $json.fields.Summary || $json.fields.Event }}\n\n—\nEvent: {{ $json.fields.Event }}\nEntity: {{ $json.fields.Entity_Type }} {{ $json.fields.Entity_Id }}\nRaised: {{ $json.fields.Created_At }}\n\nOpen the app: https://aequilibri-next.onrender.com/app/sunridge\n\nSent by the aequilibri outbound queue (PLAT_OUTBOX) via n8n.",
+        "message": "={{ $json.summary || $json.event }}\n\n—\nEvent: {{ $json.event }}\nEntity: {{ $json.entityType }} #{{ $json.entityId }}\nRaised: {{ $json.createdAt }}\n\nOpen the app: https://aequilibri-next.onrender.com/app/sunridge\n\nSent by the aequilibri outbound queue via n8n.",
         "options": {}
       },
       "id": "c1000000-0000-4000-8000-000000000004",
       "name": "Gmail — send to mac@aequilibri",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
-      "position": [420, 60]
+      "position": [620, 60]
     },
     {
       "parameters": {
-        "method": "PATCH",
-        "url": "=https://api.airtable.com/v0/app51Tmrgab3QYP4Z/PLAT_OUTBOX/{{ $('Split out records').item.json.id }}",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "airtableTokenApi",
+        "method": "POST",
+        "url": "https://aequilibri-next.onrender.com/api/platform/outbox",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $vars.OUTBOX_FEED_SECRET }}"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ fields: { Status: 'delivered', Delivered_At: $now.toISO() } }) }}",
+        "jsonBody": "={{ JSON.stringify({ id: $('Only sunridge events').item.json.id, status: 'delivered' }) }}",
         "options": {}
       },
       "id": "c1000000-0000-4000-8000-000000000005",
       "name": "Mark delivered",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 60]
+      "position": [840, 60]
     }
   ],
   "connections": {
     "Every 2 minutes": {
-      "main": [[{ "node": "Fetch pending outbox rows", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Fetch pending outbox events", "type": "main", "index": 0 }]]
     },
     "Manual test trigger": {
-      "main": [[{ "node": "Fetch pending outbox rows", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Fetch pending outbox events", "type": "main", "index": 0 }]]
     },
-    "Fetch pending outbox rows": {
-      "main": [[{ "node": "Split out records", "type": "main", "index": 0 }]]
+    "Fetch pending outbox events": {
+      "main": [[{ "node": "Split out events", "type": "main", "index": 0 }]]
     },
-    "Split out records": {
+    "Split out events": {
+      "main": [[{ "node": "Only sunridge events", "type": "main", "index": 0 }]]
+    },
+    "Only sunridge events": {
       "main": [[{ "node": "Gmail — send to mac@aequilibri", "type": "main", "index": 0 }]]
     },
     "Gmail — send to mac@aequilibri": {

@@ -1,7 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ChatStreamEvent } from "@/lib/claude";
-import { airtableEnabled, core } from "@/lib/airtable";
-import { db, prisma } from "@/lib/db";
+import { db } from "@/lib/db";
 import { normalizeTeamRole } from "@/lib/platform/module1Governance";
 import { isPlatformAdmin } from "@/lib/platform/org-context";
 import { getPrompt } from "@/lib/platform/prompts";
@@ -13,31 +12,9 @@ import { jobContextBlock } from "./context";
 import type { ToolOutcome } from "./executor";
 import { runOrchestrator, type Specialist } from "../agents/orchestrator";
 import { SPECIALISTS } from "../agents/registry";
-import { PROPOSED_PENDING_FORMULA } from "@/lib/platform/pendingWritesSource";
-import { currentJobScope, inScope } from "@/lib/platform/rls";
+import { currentJobScope } from "@/lib/platform/rls";
 
 const HISTORY_LIMIT = 20;
-
-const formulaSafe = (v: string): string => v.replace(/'/g, "");
-const OPEN_ISSUES_FORMULA = `OR({Status}='Open',{Status}='In Progress')`;
-
-/** Scalar fields worth grounding on — omits the many link arrays that make a
- *  raw JOBS row huge in the prompt. */
-const JOB_SUMMARY_FIELDS = [
-  "Job_Name",
-  "Status",
-  "Target_Completion",
-  "Outcome",
-  "Estimated_Value",
-  "Actual_Value",
-  "Variance_Percent",
-] as const;
-
-function compactJob(job: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { id: job.id };
-  for (const k of JOB_SUMMARY_FIELDS) if (job[k] != null) out[k] = job[k];
-  return out;
-}
 
 interface ChatMessageRow {
   id: RecordId;
@@ -45,31 +22,6 @@ interface ChatMessageRow {
   content: string;
   toolCalls: string;
   createdAt: Date;
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
-function dt(v: unknown): Date {
-  const s = str(v);
-  const d = s ? new Date(s) : new Date(0);
-  return Number.isNaN(d.getTime()) ? new Date(0) : d;
-}
-
-async function listSessionMessagesAirtable(ctx: OrgCtx, sessionId: RecordId): Promise<ChatMessageRow[]> {
-  const rows = await core.list(ctx.orgSlug, "CHAT_MESSAGES", {
-    filterByFormula: `{Session_Id}='${formulaSafe(String(sessionId))}'`,
-  });
-  return rows
-    .map((r) => ({
-      id: r.id,
-      role: str(r["Role"]),
-      content: str(r["Content"]),
-      toolCalls: str(r["Tool_Calls"]) || "[]",
-      createdAt: dt(r["Created_At"]),
-    }))
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 }
 
 /** Which surface a session belongs to. The project assistant (/assistant) and
@@ -119,20 +71,6 @@ export async function getOrCreateSession(
     const existing = await listChatSessions(ctx);
     return existing.length ? existing[0].id : createChatSession(ctx);
   }
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "CHAT_SESSIONS", { maxRecords: 200 });
-    const open = rows
-      .filter((r) => !str(r["Ended_At"]) && str(r["Session_Title"]) === PROJECT_TITLE)
-      .sort((a, b) => dt(b["Started_At"]).getTime() - dt(a["Started_At"]).getTime())[0];
-    if (open) return open.id;
-    const created = await core.create(ctx.orgSlug, "CHAT_SESSIONS", {
-      Session_Title: PROJECT_TITLE,
-      Job_Id: jobId == null ? "" : String(jobId),
-      Started_At: new Date().toISOString(),
-      Summary: "",
-    });
-    return created.id;
-  }
   const open = await db(ctx).platChatSession.findFirst({
     where: { orgId: ctx.orgId, endedAt: null, title: PROJECT_TITLE },
     orderBy: { startedAt: "desc" },
@@ -146,18 +84,6 @@ export async function getOrCreateSession(
 
 /** All standalone-chat conversations for the org, most recent first. */
 export async function listChatSessions(ctx: OrgCtx): Promise<ChatSessionSummary[]> {
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "CHAT_SESSIONS", { maxRecords: 200 });
-    return rows
-      .filter((r) => isStandaloneTitle(str(r["Session_Title"])))
-      .map((r) => ({
-        id: r.id,
-        title: chatDisplayTitle(str(r["Session_Title"])),
-        startedAt: dt(r["Started_At"]),
-        ended: Boolean(str(r["Ended_At"])),
-      }))
-      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
-  }
   const rows = await db(ctx).platChatSession.findMany({
     where: { orgId: ctx.orgId, title: { startsWith: STANDALONE_PREFIX } },
     orderBy: { startedAt: "desc" },
@@ -173,15 +99,6 @@ export async function listChatSessions(ctx: OrgCtx): Promise<ChatSessionSummary[
 /** Open a fresh standalone conversation and return its id. */
 export async function createChatSession(ctx: OrgCtx, title?: string): Promise<RecordId> {
   const encoded = encodeChatTitle(title ?? DEFAULT_CHAT_TITLE);
-  if (airtableEnabled(ctx)) {
-    const created = await core.create(ctx.orgSlug, "CHAT_SESSIONS", {
-      Session_Title: encoded,
-      Job_Id: "",
-      Started_At: new Date().toISOString(),
-      Summary: "",
-    });
-    return created.id;
-  }
   const session = await db(ctx).platChatSession.create({ data: { orgId: ctx.orgId, title: encoded } });
   return session.id;
 }
@@ -189,10 +106,6 @@ export async function createChatSession(ctx: OrgCtx, title?: string): Promise<Re
 /** Rename a standalone conversation (used for first-message auto-titling). */
 export async function renameChatSession(ctx: OrgCtx, sessionId: RecordId, title: string): Promise<void> {
   const encoded = encodeChatTitle(title);
-  if (airtableEnabled(ctx)) {
-    await core.update(ctx.orgSlug, "CHAT_SESSIONS", String(sessionId), { Session_Title: encoded });
-    return;
-  }
   await db(ctx).platChatSession.updateMany({
     where: { id: Number(sessionId), orgId: ctx.orgId },
     data: { title: encoded },
@@ -202,15 +115,6 @@ export async function renameChatSession(ctx: OrgCtx, sessionId: RecordId, title:
 /** Permanently delete a standalone conversation and its messages. Callers must
  *  first confirm the id belongs to this org's standalone set (isChatSession). */
 export async function deleteChatSession(ctx: OrgCtx, sessionId: RecordId): Promise<void> {
-  if (airtableEnabled(ctx)) {
-    const msgs = await core.list(ctx.orgSlug, "CHAT_MESSAGES", {
-      filterByFormula: `{Session_Id}='${formulaSafe(String(sessionId))}'`,
-    });
-    // deleteRecords chunks the 10-per-call Airtable limit and no-ops on empty.
-    await core.remove(ctx.orgSlug, "CHAT_MESSAGES", msgs.map((m) => m.id));
-    await core.remove(ctx.orgSlug, "CHAT_SESSIONS", [String(sessionId)]);
-    return;
-  }
   await db(ctx).platChatMessage.deleteMany({ where: { orgId: ctx.orgId, sessionId: Number(sessionId) } });
   await db(ctx).platChatSession.deleteMany({ where: { id: Number(sessionId), orgId: ctx.orgId } });
 }
@@ -245,33 +149,10 @@ export async function endSession(
    *  persistence record; per-turn logs cover the turns, not the close). */
   close?: { summary?: string; rulesFlagged?: string[]; correctionCaptured?: boolean },
 ): Promise<void> {
-  if (airtableEnabled(ctx)) {
-    await core.update(ctx.orgSlug, "CHAT_SESSIONS", String(sessionId), {
-      Ended_At: new Date().toISOString(),
-      ...(close?.summary ? { Summary: close.summary } : {}),
-    });
-    if (close) {
-      await core
-        .create(ctx.orgSlug, "EXECUTION_LOG", {
-          Log_Entry: "session close",
-          Action_Type: "Chat",
-          Tables_Affected: "CHAT_SESSIONS",
-          Summary: JSON.stringify({
-            sessionClose: {
-              sessionId: String(sessionId),
-              summary: close.summary ?? "",
-              rulesFlagged: close.rulesFlagged ?? [],
-              correctionCaptured: close.correctionCaptured ?? false,
-            },
-          }),
-          Initiated_By: "Owner",
-          Status: "Done",
-          Date_Time: new Date().toISOString(),
-        })
-        .catch(() => {});
-    }
-    return;
-  }
+  // The Postgres store has never persisted the close review (the summary stamp
+  // and session-close EXECUTION_LOG entry were Airtable-only); the parameter is
+  // kept so callers' signatures are unchanged.
+  void close;
   await db(ctx).platChatSession.updateMany({
     where: { id: Number(sessionId), orgId: ctx.orgId },
     data: { endedAt: new Date() },
@@ -279,9 +160,6 @@ export async function endSession(
 }
 
 export async function listMessages(ctx: OrgCtx, sessionId: RecordId): Promise<ChatMessageRow[]> {
-  if (airtableEnabled(ctx)) {
-    return listSessionMessagesAirtable(ctx, sessionId);
-  }
   const rows = await db(ctx).platChatMessage.findMany({
     where: { orgId: ctx.orgId, sessionId: Number(sessionId) },
     orderBy: { createdAt: "asc" },
@@ -300,24 +178,6 @@ export async function listMessages(ctx: OrgCtx, sessionId: RecordId): Promise<Ch
  *  (and org-global rows), never the whole org's projects/counts. */
 async function dataContext(ctx: OrgCtx): Promise<string> {
   const scope = await currentJobScope(ctx);
-  const firstLink = (v: unknown): string | null =>
-    Array.isArray(v) && v.length > 0 ? String(v[0]) : null;
-  if (airtableEnabled(ctx)) {
-    // Read a wider page when scoping so the viewer's jobs aren't missed by the
-    // grounding snapshot; whole-tenant viewers keep the cheap top-10 read.
-    const [jobsAll, actionsAll, pendingAll] = await Promise.all([
-      core.list(ctx.orgSlug, "JOBS", { maxRecords: scope.mode === "all" ? 10 : 200 }),
-      core.list(ctx.orgSlug, "ISSUES", { filterByFormula: OPEN_ISSUES_FORMULA }),
-      core.list(ctx.orgSlug, "PENDING_WRITES", { filterByFormula: PROPOSED_PENDING_FORMULA }),
-    ]);
-    const jobs = (scope.mode === "all" ? jobsAll : jobsAll.filter((j) => inScope(scope, j.id))).slice(0, 10);
-    const actions = scope.mode === "all" ? actionsAll : actionsAll.filter((a) => inScope(scope, firstLink(a["Job"])));
-    const pending = scope.mode === "all" ? pendingAll : pendingAll.filter((p) => inScope(scope, str(p["Job_Id"]) || null));
-    return [
-      `Jobs: ${JSON.stringify(jobs.map(compactJob))}`,
-      `Open actions: ${actions.length}. Pending write proposals awaiting human approval: ${pending.length}.`,
-    ].join("\n");
-  }
   const ids = scope.mode === "some" ? [...scope.jobIds].map(Number).filter((n) => Number.isFinite(n)) : null;
   const jobW = ids ? { jobId: { in: ids } } : scope.mode === "none" ? { jobId: -1 } : {};
   const ownW = ids ? { id: { in: ids } } : scope.mode === "none" ? { id: -1 } : {};
@@ -347,34 +207,6 @@ async function dataContext(ctx: OrgCtx): Promise<string> {
   ].join("\n");
 }
 
-/** Spec 12 session-start protocol (lock plan §6.3): when 3 or more CORRECTIONS
- *  landed since the last ended session, surface them at session start before
- *  other work — they may prompt immediate pattern detection. Counted on
- *  CORRECTIONS.Date_Found (stamped by emitCorrection) against the most recent
- *  CHAT_SESSIONS.Ended_At. Airtable mode only; "" when below threshold. */
-async function recentCorrectionsBlock(ctx: OrgCtx): Promise<string> {
-  if (!airtableEnabled(ctx)) return "";
-  try {
-    const sessions = await core.list(ctx.orgSlug, "CHAT_SESSIONS", { maxRecords: 200 });
-    const lastEnded = sessions
-      .map((s) => str(s["Ended_At"]))
-      .filter(Boolean)
-      .sort()
-      .at(-1);
-    if (!lastEnded) return ""; // first session — nothing to compare against
-    const cutoff = lastEnded.slice(0, 10);
-    const corrections = await core.list(ctx.orgSlug, "CORRECTIONS", { maxRecords: 1000 });
-    const recent = corrections.filter((c) => {
-      const d = str(c["Date_Found"]);
-      return d !== "" && d >= cutoff;
-    }).length;
-    if (recent < 3) return "";
-    return `SESSION-START PROTOCOL: ${recent} corrections were captured since the last session. Surface them to the user before other work — suggest reviewing the Automation rules page; they may prompt immediate pattern detection (run the hypothesis engine).`;
-  } catch {
-    return "";
-  }
-}
-
 export interface SendResult {
   sessionId: RecordId;
   reply: string;
@@ -396,43 +228,25 @@ export async function sendChatMessage(
 ): Promise<SendResult> {
   const startedAt = Date.now();
   const sessionId = opts.sessionId ?? (await getOrCreateSession(ctx, opts.jobId));
-  let userMsgId: number | undefined;
-  let userMsgRecordId: string | undefined;
-  if (airtableEnabled(ctx)) {
-    const userMsg = await core.create(ctx.orgSlug, "CHAT_MESSAGES", {
-      Session_Id: String(sessionId),
-      Role: "user",
-      Content: text,
-      Tool_Calls: "[]",
-      Created_At: new Date().toISOString(),
-    });
-    userMsgRecordId = userMsg.id;
-  } else {
-    const userMsg = await db(ctx).platChatMessage.create({
-      data: { orgId: ctx.orgId, sessionId: Number(sessionId), role: "user", content: text },
-    });
-    userMsgId = userMsg.id;
-  }
+  const userMsg = await db(ctx).platChatMessage.create({
+    data: { orgId: ctx.orgId, sessionId: Number(sessionId), role: "user", content: text },
+  });
+  const userMsgId: number = userMsg.id;
 
   const readsAt = Date.now();
-  const [rulesBlock, context, correctionsBlock, sessionContext, vocabBlock, historyRows] = await Promise.all([
+  const [rulesBlock, context, sessionContext, vocabBlock, historyRows] = await Promise.all([
     learningPromptText(ctx),
     dataContext(ctx),
-    recentCorrectionsBlock(ctx),
     // Spec 12 Module 7 context loading (lock plan §7.1): phases+RAG, budget
     // summary (finance-visible roles), issue counts, recent decisions and
     // activity — TTL-cached, invalidated by every write through recordWriter.
     jobContextBlock(ctx, { jobId: opts.jobId, role: opts.userRole }),
     domainVocabBlock(ctx),
-    airtableEnabled(ctx)
-      ? listSessionMessagesAirtable(ctx, sessionId).then((rows) =>
-          rows.filter((m) => String(m.id) !== String(userMsgRecordId)).slice(-HISTORY_LIMIT).reverse(),
-        )
-      : db(ctx).platChatMessage.findMany({
-          where: { orgId: ctx.orgId, sessionId: Number(sessionId), id: { lt: userMsgId! } },
-          orderBy: { createdAt: "desc" },
-          take: HISTORY_LIMIT,
-        }),
+    db(ctx).platChatMessage.findMany({
+      where: { orgId: ctx.orgId, sessionId: Number(sessionId), id: { lt: userMsgId } },
+      orderBy: { createdAt: "desc" },
+      take: HISTORY_LIMIT,
+    }),
   ]);
   const readMs = Date.now() - readsAt;
 
@@ -442,7 +256,6 @@ export async function sendChatMessage(
     jobLine: opts.jobId ? ` (current job id ${opts.jobId})` : "",
     rulesBlock: [
       rulesBlock,
-      correctionsBlock,
       sessionContext,
       vocabBlock,
       `Current user role: ${normalizeTeamRole(opts.userRole ?? "broker")}.`,
@@ -510,53 +323,32 @@ export async function sendChatMessage(
     })),
   ];
 
-  if (airtableEnabled(ctx)) {
-    await core.create(ctx.orgSlug, "CHAT_MESSAGES", {
-      Session_Id: String(sessionId),
-      Role: "assistant",
-      Content: reply || "(no reply)",
-      Tool_Calls: JSON.stringify(toolTrace),
-      Created_At: new Date().toISOString(),
-    });
-    await core
-      .create(ctx.orgSlug, "EXECUTION_LOG", {
-        Log_Entry: "chat",
-        Action_Type: "chat",
-        Tables_Affected: "CHAT_MESSAGES",
-        Summary: JSON.stringify({ user: userName, tools: outcomes.length, demoMode, ...timing }),
-        Initiated_By: "AI",
-        Status: "executed",
-        Date_Time: new Date().toISOString(),
-      })
-      .catch(() => {});
-  } else {
-    await db(ctx).platChatMessage.create({
+  await db(ctx).platChatMessage.create({
+    data: {
+      orgId: ctx.orgId,
+      sessionId: Number(sessionId),
+      role: "assistant",
+      content: reply || "(no reply)",
+      toolCalls: JSON.stringify(toolTrace),
+    },
+  });
+  await db(ctx).platExecutionLog
+    .create({
       data: {
         orgId: ctx.orgId,
-        sessionId: Number(sessionId),
-        role: "assistant",
-        content: reply || "(no reply)",
-        toolCalls: JSON.stringify(toolTrace),
+        jobId: typeof opts.jobId === "number" ? opts.jobId : undefined,
+        actorType: "ai",
+        actorName: ctx.config.assistant.name,
+        operation: "chat",
+        targetTable: "plat_core_chatmessage",
+        payload: JSON.stringify({ user: userName, tools: outcomes.length, demoMode, ...timing }),
+        status: "executed",
+        executedAt: new Date(),
+        sourceMessageId: userMsgId,
+        promptVersion: version,
       },
-    });
-    await db(ctx).platExecutionLog
-      .create({
-        data: {
-          orgId: ctx.orgId,
-          jobId: typeof opts.jobId === "number" ? opts.jobId : undefined,
-          actorType: "ai",
-          actorName: ctx.config.assistant.name,
-          operation: "chat",
-          targetTable: "plat_core_chatmessage",
-          payload: JSON.stringify({ user: userName, tools: outcomes.length, demoMode, ...timing }),
-          status: "executed",
-          executedAt: new Date(),
-          sourceMessageId: userMsgId,
-          promptVersion: version,
-        },
-      })
-      .catch(() => {});
-  }
+    })
+    .catch(() => {});
 
   return { sessionId, reply, demoMode, outcomes, pendingApprovals };
 }

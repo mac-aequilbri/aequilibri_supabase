@@ -1,22 +1,10 @@
-// Action Hub data source — Postgres (default) or the canonical Airtable
-// ACTION_HUB table when AIRTABLE_MIGRATION is enabled. Returns a uniform view
-// model + metrics so the page is identical regardless of backend. Same pattern
-// as decisionsSource.ts.
+// Action Hub data source — Postgres. Returns a uniform view model + metrics.
+// Same pattern as decisionsSource.ts.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
+import { ACTION_STATUSES, type AppStatus } from "./actionStatus";
+import { currentJobScope, recordInScope } from "./rls";
 import {
-  ACTION_STATUSES,
-  resolveActionStatus,
-  suggestStatus,
-  type AppStatus,
-} from "./actionStatus";
-import { loadActionStatusMap } from "./configSource";
-import { loadJobLabelMap } from "./jobOptionsSource";
-import { currentJobScope, recordInScope, scopeRows } from "./rls";
-import {
-  countEnumOptions,
-  toPredicate,
   toPrismaWhere,
   type FacetCounts,
   type ListQuery,
@@ -58,7 +46,7 @@ export interface ActionsData {
   unmapped: UnmappedStatus[];
   /** Unfiltered row count, so the FilterBar can show "12 of 214". */
   total: number;
-  /** Per-option counts over the unfiltered list (Airtable path only). */
+  /** Per-option counts over the unfiltered list (not computed on Postgres). */
   facets?: FacetCounts;
 }
 
@@ -140,22 +128,7 @@ export const actionsListConfig: ListViewConfig<ActionView> = {
   pageSize: 50,
 };
 
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-function firstLink(v: unknown): string | null {
-  return Array.isArray(v) && v.length > 0 ? String(v[0]) : null;
-}
-
-/** Airtable stores the owner text in Notes as "Owner: <name>" (the Assigned_To
- *  field is a linked record we can't set from a free-text name). Pull it back
- *  out so the edited owner is what the UI shows. */
-function ownerFromNotes(notes: string): string {
-  const m = notes.match(/Owner:\s*(.+)/i);
-  return m ? m[1].split(/\r?\n/)[0].trim() : "";
-}
-
-/** Map a raw Airtable Priority option back to the app's P1/P2/P3 vocabulary so
+/** Map a raw legacy Priority option back to the app's P1/P2/P3 vocabulary so
  *  the edit form's select can default correctly. Postgres already stores P#. */
 function appPriority(raw: string): string {
   const s = raw.trim();
@@ -184,9 +157,8 @@ export interface ActionDetail {
 }
 
 async function fromPostgres(ctx: OrgCtx, query?: ListQuery): Promise<ActionsData> {
-  // RLS: scope the list AND the headline metrics to the viewer's assigned jobs
-  // (Postgres path — the Airtable branch scopes via scopeRows). No-op for
-  // whole-tenant viewers.
+  // RLS: scope the list AND the headline metrics to the viewer's assigned jobs.
+  // No-op for whole-tenant viewers.
   const scope = await currentJobScope(ctx);
   const ids = scope.mode === "some" ? [...scope.jobIds].map(Number).filter((n) => Number.isFinite(n)) : null;
   const jobW = ids ? { jobId: { in: ids } } : scope.mode === "none" ? { jobId: -1 } : {};
@@ -230,7 +202,7 @@ async function fromPostgres(ctx: OrgCtx, query?: ListQuery): Promise<ActionsData
       status: a.status,
       rawStatus: a.status, // Postgres statuses are already canonical
       needsMapping: false,
-      issueType: "", // no Postgres column — Issue_Type is an Airtable-only field
+      issueType: a.issueType,
     })),
     metrics: { open, overdue, fromChat, needsMapping: 0 },
     unmapped: [],
@@ -240,102 +212,13 @@ async function fromPostgres(ctx: OrgCtx, query?: ListQuery): Promise<ActionsData
   };
 }
 
-async function fromAirtable(ctx: OrgCtx, query?: ListQuery): Promise<ActionsData> {
-  const [rows, orgMap, jobLabels] = await Promise.all([
-    core.list(ctx.orgSlug, "ISSUES", { maxRecords: 1000 }),
-    loadActionStatusMap(ctx),
-    loadJobLabelMap(ctx),
-  ]);
-  const now = Date.now();
-  const unscoped: ActionView[] = rows.map((r) => {
-    const raw = str(r["Status"]);
-    const res = resolveActionStatus(raw, orgMap);
-    const due = str(r["Due_Date"]);
-    const owner = r["Assigned_To"];
-    const notesOwner = ownerFromNotes(str(r["Notes"]));
-    const jobRec = firstLink(r["Job"]);
-    return {
-      id: r.id,
-      title: str(r["Action_Name"]) || "(untitled action)",
-      detail: str(r["Description"]),
-      jobCode: jobRec ? (jobLabels.get(jobRec) ?? null) : null,
-      jobId: jobRec,
-      owner: notesOwner || (Array.isArray(owner) && owner.length > 0 ? "(linked)" : "—"),
-      dueDate: due ? new Date(due) : null,
-      priority: str(r["Priority"]) || "—",
-      sourceType: "airtable",
-      status: res.canonical ?? "unmapped",
-      rawStatus: raw,
-      needsMapping: !res.clean,
-      issueType: str(r["Issue_Type"]),
-    };
-  });
-  // RLS: scope to the viewer's assigned jobs before metrics/facets so counts
-  // reflect only what they can see (no-op `all` until TEAM assignments exist).
-  const all = scopeRows(unscoped, (a) => a.jobId, await currentJobScope(ctx));
-  // Only cleanly-resolved rows feed the headline metrics — unmapped values are
-  // NOT guessed into "open" (that was the old bug); they surface separately so
-  // the user can map them and the count stays trustworthy.
-  const isOpen = (a: ActionView) =>
-    !a.needsMapping && (a.status === "open" || a.status === "in_progress");
-  const metrics = {
-    open: all.filter(isOpen).length,
-    overdue: all.filter((a) => isOpen(a) && a.dueDate !== null && a.dueDate.getTime() < now).length,
-    fromChat: 0, // Airtable ACTION_HUB has no source channel
-    needsMapping: all.filter((a) => a.needsMapping).length,
-  };
-  // Distinct non-blank unmapped raw values, most-common first, with a suggestion.
-  const byRaw = new Map<string, number>();
-  for (const a of all) {
-    if (a.needsMapping && a.rawStatus.trim()) byRaw.set(a.rawStatus, (byRaw.get(a.rawStatus) ?? 0) + 1);
-  }
-  const unmapped: UnmappedStatus[] = [...byRaw.entries()]
-    .map(([raw, count]) => ({ raw, count, suggestion: suggestStatus(raw) }))
-    .sort((a, b) => b.count - a.count);
-
-  return {
-    // Filtering happens here, AFTER the TTL-cached core.list read — toggling
-    // filters re-slices the cached snapshot instead of adding Airtable calls.
-    items: query ? all.filter(toPredicate(query, actionsListConfig)) : all,
-    metrics,
-    unmapped,
-    total: all.length,
-    facets: countEnumOptions(all, actionsListConfig),
-  };
-}
-
-/** Load actions + headline metrics from whichever backend is active. */
+/** Load actions + headline metrics. */
 export function loadActions(ctx: OrgCtx, query?: ListQuery): Promise<ActionsData> {
-  return airtableEnabled(ctx) ? fromAirtable(ctx, query) : fromPostgres(ctx, query);
+  return fromPostgres(ctx, query);
 }
 
 /** Load a single action for the edit page. Null if it doesn't exist in this org. */
 export async function loadAction(ctx: OrgCtx, id: string): Promise<ActionDetail | null> {
-  if (airtableEnabled(ctx)) {
-    let r: Record<string, unknown> | null = null;
-    try {
-      r = await core.get(ctx.orgSlug, "ISSUES", id);
-    } catch {
-      return null;
-    }
-    if (!r) return null;
-    if (!(await recordInScope(ctx, r))) return null;
-    const orgMap = await loadActionStatusMap(ctx);
-    const res = resolveActionStatus(str(r["Status"]), orgMap);
-    const due = str(r["Due_Date"]);
-    return {
-      id: str(r.id) || id,
-      title: str(r["Action_Name"]) || "(untitled action)",
-      detail: str(r["Description"]),
-      owner: ownerFromNotes(str(r["Notes"])),
-      dueDate: due ? new Date(due) : null,
-      priority: appPriority(str(r["Priority"])),
-      status: res.canonical ?? "open",
-      issueType: str(r["Issue_Type"]),
-      jobCode: null,
-      jobId: firstLink(r["Job"]),
-    };
-  }
   const a = await db(ctx).platActionHub.findFirst({
     where: { id: Number(id), orgId: ctx.orgId },
     include: { job: { select: { code: true } } },

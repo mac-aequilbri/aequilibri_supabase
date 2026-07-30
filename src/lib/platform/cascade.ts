@@ -30,8 +30,7 @@
 //  · Effects fire only on app-mediated writes — direct Airtable-UI edits
 //    bypass them (same accepted limitation as post-write reconciliation).
 
-import { airtableEnabled, core } from "@/lib/airtable";
-import { db, prisma } from "@/lib/db";
+import { db } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { getActiveRules, markRuleApplied, type RuleRow } from "@/services/platform/learning";
 import { normalizeRag } from "./phasesSource";
@@ -39,8 +38,6 @@ import type { Actor, OrgCtx } from "./types";
 
 const S = (v: unknown): string => (typeof v === "string" ? v : "");
 const N = (v: unknown): number => (typeof v === "number" ? v : Number(v) || 0);
-const firstLink = (v: unknown): string | null =>
-  Array.isArray(v) && v.length > 0 ? String(v[0]) : null;
 
 /** What the engine sees of a completed write. `data` carries APP payload keys
  *  (jobId/status/…) — the same keys the field maps translate. */
@@ -212,26 +209,7 @@ async function cascadeProcurementToCashflow(ctx: OrgCtx, write: CascadeWrite): P
     existingId: string | number | null;
   } | null = null;
 
-  if (airtableEnabled(ctx)) {
-    const procId = typeof write.recordId === "string" ? write.recordId : null;
-    if (!procId?.startsWith("rec")) return;
-    const proc = await core.get(ctx.orgSlug, "PROCUREMENT", procId);
-    if (!proc) return;
-    const marker = `cascade:${procId}`;
-    const dateRaw = S(proc["Actual_Date"]) || S(proc["Expected_Date"]) || new Date().toISOString();
-    const existing = await core.list(ctx.orgSlug, "CASHFLOWS", {
-      maxRecords: 5,
-      filterByFormula: `SEARCH("${marker.replace(/"/g, "")}", {Notes}&"")`,
-    });
-    source = {
-      marker,
-      name: `Procurement — ${S(proc["Procurement_Name"]) || "item"}`,
-      amount: N(proc["Total_Cost"]) || N(proc["Quantity"]) * N(proc["Unit_Cost"]),
-      period: dateRaw.slice(0, 7),
-      jobId: firstLink(proc["Job"]),
-      existingId: existing.length > 0 ? existing[0].id : null,
-    };
-  } else {
+  {
     const procId = Number(write.recordId);
     if (!Number.isInteger(procId)) return;
     const proc = await db(ctx).platConProcurement.findFirst({
@@ -289,14 +267,7 @@ async function cascadeBlockerToPhaseRag(ctx: OrgCtx, write: CascadeWrite): Promi
   let phaseId: string | number | null = null;
   let currentRag = "";
 
-  if (airtableEnabled(ctx)) {
-    const recId = typeof write.data.phaseId === "string" ? write.data.phaseId : null;
-    if (!recId?.startsWith("rec")) return;
-    const phase = await core.get(ctx.orgSlug, "PHASES", recId);
-    if (!phase) return;
-    phaseId = recId;
-    currentRag = normalizeRag(phase["RAG"]);
-  } else {
+  {
     const numId = Number(write.data.phaseId);
     if (!Number.isInteger(numId) || numId <= 0) return;
     const phase = await db(ctx).platConPhase.findFirst({ where: { id: numId, orgId: ctx.orgId } });
@@ -325,21 +296,7 @@ async function cascadeRiskToIssue(ctx: OrgCtx, write: CascadeWrite): Promise<voi
   let jobId: string | number | null = null;
   let already = false;
 
-  if (airtableEnabled(ctx)) {
-    const recId = typeof write.recordId === "string" ? write.recordId : null;
-    if (!recId?.startsWith("rec")) return;
-    const risk = await core.get(ctx.orgSlug, "RISKS", recId);
-    if (!risk) return;
-    // Idempotent on the ISSUES.RISKS link the action field map writes from riskId.
-    const issues = await core.list(ctx.orgSlug, "ISSUES", { maxRecords: 1000 });
-    already = issues.some(
-      (i) => S(i["Issue_Type"]) === "Risk Materialised" && firstLink(i["RISKS"]) === recId,
-    );
-    riskId = recId;
-    riskTitle = S(risk["Risk"]);
-    mitigation = S(risk["Mitigation"]);
-    jobId = firstLink(risk["Job"]);
-  } else {
+  {
     const numId = Number(write.recordId);
     if (!Number.isInteger(numId)) return;
     const risk = await db(ctx).platConRisk.findFirst({ where: { id: numId, orgId: ctx.orgId } });
@@ -395,18 +352,6 @@ async function recordAdvisory(ctx: OrgCtx, rule: CascadeRule, write: CascadeWrit
       recordId: write.recordId == null ? null : String(write.recordId),
     },
   });
-  if (airtableEnabled(ctx)) {
-    await core.create(ctx.orgSlug, "EXECUTION_LOG", {
-      Log_Entry: `Cascade advisory ${rule.code}`.slice(0, 200),
-      Action_Type: "Update",
-      Tables_Affected: write.table,
-      Summary: cascadeJson,
-      Initiated_By: "System",
-      Status: "Ongoing",
-      Date_Time: new Date().toISOString(),
-    });
-    return;
-  }
   await db(ctx).platExecutionLog.create({
     data: {
       orgId: ctx.orgId,
@@ -422,59 +367,31 @@ async function recordAdvisory(ctx: OrgCtx, rule: CascadeRule, write: CascadeWrit
   });
 }
 
-/** Open advisories for the coordination queue, from whichever store holds
- *  EXECUTION_LOG. */
+/** Open advisories for the coordination queue (EXECUTION_LOG rows with
+ *  operation "cascade" and status "Ongoing"). */
 export async function loadCascadeAdvisories(ctx: OrgCtx): Promise<CascadeAdvisory[]> {
-  if (!airtableEnabled(ctx)) {
-    const rows = await db(ctx).platExecutionLog.findMany({
-      where: { orgId: ctx.orgId, operation: "cascade", status: "Ongoing" },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    });
-    const out: CascadeAdvisory[] = [];
-    for (const r of rows) {
-      try {
-        const c = (JSON.parse(r.payload) as { cascade?: { ruleCode?: string; message?: string; table?: string } }).cascade;
-        if (!c?.ruleCode) continue;
-        out.push({
-          id: String(r.id),
-          ruleCode: c.ruleCode,
-          message: c.message ?? "",
-          table: c.table ?? "",
-          createdAt: r.createdAt.toISOString(),
-        });
-      } catch {
-        /* not an advisory row */
-      }
+  const rows = await db(ctx).platExecutionLog.findMany({
+    where: { orgId: ctx.orgId, operation: "cascade", status: "Ongoing" },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  const out: CascadeAdvisory[] = [];
+  for (const r of rows) {
+    try {
+      const c = (JSON.parse(r.payload) as { cascade?: { ruleCode?: string; message?: string; table?: string } }).cascade;
+      if (!c?.ruleCode) continue;
+      out.push({
+        id: String(r.id),
+        ruleCode: c.ruleCode,
+        message: c.message ?? "",
+        table: c.table ?? "",
+        createdAt: r.createdAt.toISOString(),
+      });
+    } catch {
+      /* not an advisory row */
     }
-    return out;
   }
-  try {
-    const rows = await core.list(ctx.orgSlug, "EXECUTION_LOG", { maxRecords: 100 });
-    const out: CascadeAdvisory[] = [];
-    for (const r of rows) {
-      if (S(r["Status"]) !== "Ongoing") continue;
-      try {
-        const summary = JSON.parse(S(r["Summary"])) as {
-          cascade?: { ruleCode?: string; message?: string; table?: string };
-        };
-        const c = summary.cascade;
-        if (!c?.ruleCode) continue;
-        out.push({
-          id: r.id,
-          ruleCode: c.ruleCode,
-          message: c.message ?? "",
-          table: c.table ?? "",
-          createdAt: S(r["Date_Time"]),
-        });
-      } catch {
-        /* not an advisory row */
-      }
-    }
-    return out;
-  } catch {
-    return [];
-  }
+  return out;
 }
 
 /** Dismiss an advisory. `override` = "not relevant" — the rule fired wrongly:
@@ -487,18 +404,7 @@ export async function dismissCascadeAdvisory(
   override: boolean,
 ): Promise<void> {
   let ruleCode = "";
-  if (airtableEnabled(ctx)) {
-    const row = await core.get(ctx.orgSlug, "EXECUTION_LOG", advisoryId);
-    if (!row || S(row["Status"]) !== "Ongoing") return;
-    try {
-      ruleCode =
-        (JSON.parse(S(row["Summary"])) as { cascade?: { ruleCode?: string } }).cascade?.ruleCode ?? "";
-    } catch {
-      return; // not an advisory row — refuse to touch other log entries
-    }
-    if (!ruleCode) return;
-    await core.update(ctx.orgSlug, "EXECUTION_LOG", advisoryId, { Status: "Done" });
-  } else {
+  {
     const numId = Number(advisoryId);
     if (!Number.isInteger(numId)) return;
     const row = await db(ctx).platExecutionLog.findFirst({
@@ -534,62 +440,29 @@ export async function dismissCascadeAdvisory(
  *  codes only). Used by onboarding and the learning-rules page's owner action
  *  (existing orgs predate the seeds). */
 export async function seedCascadeRules(ctx: OrgCtx): Promise<number> {
-  if (!airtableEnabled(ctx)) {
-    const rows = await db(ctx).platLearningRule.findMany({
-      where: { orgId: ctx.orgId, ruleCode: { startsWith: "CASCADE-" } },
-      select: { ruleCode: true },
-    });
-    const existing = new Set(rows.map((r) => r.ruleCode));
-    let created = 0;
-    for (const seed of CASCADE_RULE_SEEDS) {
-      if (existing.has(seed.ruleCode)) continue;
-      await db(ctx).platLearningRule.create({
-        data: {
-          orgId: ctx.orgId,
-          ruleCode: seed.ruleCode,
-          kind: "guidance",
-          description: seed.description,
-          triggerCondition: seed.triggerCondition,
-          confidence: 80,
-          isActive: seed.isActive,
-          autoApply: false,
-          cannotOverride: false,
-          overrideLevel: "owner_only",
-          dateActivated: seed.isActive ? new Date() : null,
-        },
-      });
-      created += 1;
-    }
-    return created;
-  }
-  const { airtableMapFor, toFields } = await import("@/lib/airtable/fieldMaps");
-  const { setRuleOverrideLevel } = await import("@/services/platform/learning");
-  const rows = await core.list(ctx.orgSlug, "LEARNING_RULES", { maxRecords: 500 });
-  const existing = new Set(rows.map((r) => S(r["Instance"])));
-  const map = airtableMapFor("learning_rule")!;
+  const rows = await db(ctx).platLearningRule.findMany({
+    where: { orgId: ctx.orgId, ruleCode: { startsWith: "CASCADE-" } },
+    select: { ruleCode: true },
+  });
+  const existing = new Set(rows.map((r) => r.ruleCode));
   let created = 0;
   for (const seed of CASCADE_RULE_SEEDS) {
     if (existing.has(seed.ruleCode)) continue;
-    const rec = await core.create(
-      ctx.orgSlug,
-      map.table,
-      toFields(
-        map,
-        {
-          ruleCode: seed.ruleCode,
-          kind: "guidance",
-          description: seed.description,
-          triggerCondition: seed.triggerCondition,
-          confidence: 80,
-          isActive: seed.isActive,
-          autoApply: false,
-          cannotOverride: false,
-          dateIssued: new Date(),
-        },
-        "create",
-      ),
-    );
-    await setRuleOverrideLevel(ctx, rec.id, "owner_only");
+    await db(ctx).platLearningRule.create({
+      data: {
+        orgId: ctx.orgId,
+        ruleCode: seed.ruleCode,
+        kind: "guidance",
+        description: seed.description,
+        triggerCondition: seed.triggerCondition,
+        confidence: 80,
+        isActive: seed.isActive,
+        autoApply: false,
+        cannotOverride: false,
+        overrideLevel: "owner_only",
+        dateActivated: seed.isActive ? new Date() : null,
+      },
+    });
     created += 1;
   }
   return created;

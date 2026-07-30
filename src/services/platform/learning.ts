@@ -14,14 +14,11 @@
 // engine; "guidance" = text, injected into the assistant prompt); thresholds
 // live in PlatCfgSetting.
 
-import { airtableEnabled, core } from "@/lib/airtable";
-import { airtableMapFor, toFields } from "@/lib/airtable/fieldMaps";
 import { db, prisma } from "@/lib/db";
 import type { RecordId } from "@/lib/platform/recordWriter";
 import { OrgCtx } from "@/lib/platform/types";
 
 const S = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
-const N = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 export interface Adjustment {
   type: "dimension_multiplier" | "contingency_pct";
@@ -159,15 +156,6 @@ const SETTING_KEYS: Record<keyof LearningSettings, string> = {
 };
 
 async function settingsByKey(ctx: OrgCtx): Promise<Map<string, string>> {
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "PLAT_CFG_SETTING", { maxRecords: 500 });
-    const m = new Map<string, string>();
-    for (const r of rows) {
-      const key = typeof r["Setting_Key"] === "string" ? (r["Setting_Key"] as string) : "";
-      if (key) m.set(key, typeof r["Value"] === "string" ? (r["Value"] as string) : String(r["Value"] ?? ""));
-    }
-    return m;
-  }
   const rows = await db(ctx).platCfgSetting.findMany({
     where: { orgId: ctx.orgId, key: { in: Object.values(SETTING_KEYS) } },
   });
@@ -345,193 +333,7 @@ function detectThreshold(settings: LearningSettings, type: HypothesisType): numb
   return Math.min(settings.hypothesisMinSamples, VALIDATION_THRESHOLDS[type]);
 }
 
-// ── Airtable corrections/hypotheses (the loop machinery, mirrored into the
-// base once scripts/airtable-add-hypothesis-link.mjs has added the link) ──────
-
 const HYP_OPEN_STATUSES = new Set(["pending", "validated", "active"]);
-
-function airCorrection(r: Record<string, unknown> & { id: string }): LoopCorrection & { clustered: boolean } {
-  let context: Record<string, string> = {};
-  let notesModule = "";
-  let notesDirection = "";
-  try {
-    const n = JSON.parse(S(r["Notes"]) || "{}") as {
-      context?: unknown;
-      sourceModule?: unknown;
-      direction?: unknown;
-    };
-    if (n && typeof n.context === "object" && n.context) context = n.context as Record<string, string>;
-    notesModule = S(n?.sourceModule);
-    notesDirection = S(n?.direction);
-  } catch {
-    /* malformed Notes */
-  }
-  const { triggers, sourceModule, direction } = splitContext(context);
-  const v = r["Variance_Percent"];
-  return {
-    id: r.id,
-    dimension: S(r["Field_Corrected"]),
-    rootCause: S(r["Root_Cause"]),
-    // First-class columns (Spec 12 §6.4, schema-drift-provisioned) win;
-    // legacy rows fall back to the Notes JSON / context metadata.
-    sourceModule: S(r["Source_Module"]) || notesModule || sourceModule,
-    direction: S(r["Correction_Direction"]) || notesDirection || direction,
-    variancePct: typeof v === "number" ? v : null,
-    context: triggers,
-    clustered: Array.isArray(r["Hypothesis"]) && (r["Hypothesis"] as unknown[]).length > 0,
-  };
-}
-
-interface AirHypothesis {
-  id: string;
-  description: string;
-  dimension: string;
-  rootCausePattern: string;
-  triggerCondition: string;
-  sampleCount: number;
-  avgVariancePct: number;
-  confidence: number;
-  status: string;
-  hypothesisType: HypothesisType;
-  clusterKey: string;
-  consistency: number;
-}
-function airHypothesis(r: Record<string, unknown> & { id: string }): AirHypothesis {
-  let meta: Record<string, unknown> = {};
-  try {
-    meta = (JSON.parse(S(r["Evidence"]) || "{}") as Record<string, unknown>) || {};
-  } catch {
-    /* malformed Evidence */
-  }
-  const typedField = S(r["Hypothesis_Type"]);
-  const hypothesisType = (HYPOTHESIS_TYPES as readonly string[]).includes(typedField)
-    ? (typedField as HypothesisType)
-    : (HYPOTHESIS_TYPES as readonly string[]).includes(S(meta.hypothesisType))
-      ? (S(meta.hypothesisType) as HypothesisType)
-      : "Domain Pattern";
-  return {
-    id: r.id,
-    description: S(r["Summary_of_Findings"]) || S(r["Hypothesis_Name"]),
-    dimension: S(meta.dimension),
-    rootCausePattern: S(meta.rootCausePattern),
-    triggerCondition: S(meta.triggerCondition) || "{}",
-    sampleCount: N(r["Evidence_Count"]),
-    avgVariancePct: N(meta.avgVariancePct),
-    confidence: N(r["Confidence"]),
-    status: S(r["Status"]) || "pending",
-    hypothesisType,
-    clusterKey: S(meta.clusterKey),
-    consistency: typeof meta.consistency === "number" ? meta.consistency : 1,
-  };
-}
-function hypFields(h: Omit<AirHypothesis, "id">): Record<string, unknown> {
-  return {
-    Hypothesis_Name: h.description.slice(0, 120) || "Hypothesis",
-    Summary_of_Findings: h.description,
-    Status: h.status,
-    Evidence_Count: h.sampleCount,
-    Confidence: h.confidence,
-    Hypothesis_Type: h.hypothesisType,
-    Evidence: JSON.stringify({
-      dimension: h.dimension,
-      rootCausePattern: h.rootCausePattern,
-      avgVariancePct: h.avgVariancePct,
-      triggerCondition: h.triggerCondition,
-      hypothesisType: h.hypothesisType,
-      clusterKey: h.clusterKey,
-      consistency: h.consistency,
-    }),
-  };
-}
-
-/** Airtable port of the clustering engine. Same statistics as the Postgres
- *  path; persistence via core.* (no transaction — corrections are low-volume). */
-async function runHypothesisEngineAirtable(
-  ctx: OrgCtx,
-  settings: LearningSettings,
-): Promise<{ created: number; updated: number }> {
-  const [corrRows, hypRows] = await Promise.all([
-    core.list(ctx.orgSlug, "CORRECTIONS", { maxRecords: 1000 }),
-    core.list(ctx.orgSlug, "HYPOTHESES", { maxRecords: 500 }),
-  ]);
-  const corrections = corrRows.map(airCorrection).filter((c) => !c.clustered && c.rootCause);
-  const existing = hypRows.map(airHypothesis);
-
-  const groups = new Map<string, LoopCorrection[]>();
-  for (const c of corrections) {
-    const key = clusterKey(c);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(c);
-  }
-
-  let created = 0;
-  let updated = 0;
-  for (const [key, group] of groups) {
-    const type = classifyGroup(group);
-    if (group.length < detectThreshold(settings, type)) continue;
-    const cause = group[0].rootCause;
-
-    const stats = groupStats(group);
-    const description = groupDescription(stats, cause);
-
-    const prior = existing.find(
-      (h) =>
-        HYP_OPEN_STATUSES.has(h.status) &&
-        (h.clusterKey
-          ? h.clusterKey === key
-          : h.dimension === stats.dimension && h.rootCausePattern === norm(cause)),
-    );
-
-    let hypId: string;
-    if (prior) {
-      const sampleCount = group.length + prior.sampleCount;
-      await core.update(
-        ctx.orgSlug,
-        "HYPOTHESES",
-        prior.id,
-        hypFields({
-          description,
-          dimension: stats.dimension,
-          rootCausePattern: cause,
-          triggerCondition: JSON.stringify(stats.trigger),
-          sampleCount,
-          avgVariancePct: stats.avgVar,
-          confidence: Math.min(95, sampleCount * 12),
-          status: proposedStatus(sampleCount, type, stats.consistency, prior.status),
-          hypothesisType: type,
-          clusterKey: key,
-          consistency: stats.consistency,
-        }),
-      );
-      hypId = prior.id;
-      updated++;
-    } else {
-      const rec = await core.create(
-        ctx.orgSlug,
-        "HYPOTHESES",
-        hypFields({
-          description,
-          dimension: stats.dimension,
-          rootCausePattern: cause,
-          triggerCondition: JSON.stringify(stats.trigger),
-          sampleCount: group.length,
-          avgVariancePct: stats.avgVar,
-          confidence: Math.min(95, group.length * 12),
-          status: proposedStatus(group.length, type, stats.consistency),
-          hypothesisType: type,
-          clusterKey: key,
-          consistency: stats.consistency,
-        }),
-      );
-      hypId = rec.id;
-      created++;
-    }
-    for (const c of group) {
-      await core.update(ctx.orgSlug, "CORRECTIONS", c.id, { Hypothesis: [hypId] });
-    }
-  }
-  return { created, updated };
-}
 
 // ── Hypothesis engine ───────────────────────────────────────────────
 // Cluster the org's un-linked corrections by the Spec 12 detection key
@@ -542,7 +344,6 @@ export async function runHypothesisEngine(
   ctx: OrgCtx,
 ): Promise<{ created: number; updated: number }> {
   const settings = await getLearningSettings(ctx);
-  if (airtableEnabled(ctx)) return runHypothesisEngineAirtable(ctx, settings);
   const rows = await db(ctx).platCorrection.findMany({
     where: { orgId: ctx.orgId, hypothesisId: null, rootCause: { not: "" } },
   });
@@ -637,13 +438,6 @@ export async function setHypothesisStatus(
   id: RecordId,
   status: "active" | "rejected",
 ): Promise<void> {
-  if (airtableEnabled(ctx)) {
-    await core.update(ctx.orgSlug, "HYPOTHESES", String(id), {
-      Status: status,
-      Date_Closed: status === "rejected" ? new Date().toISOString() : undefined,
-    });
-    return;
-  }
   await db(ctx).platHypothesis.updateMany({
     where: { id: Number(id), orgId: ctx.orgId },
     data: { status, reviewedAt: new Date() },
@@ -656,17 +450,11 @@ export async function setHypothesisStatus(
  *  under @@unique([orgId, ruleCode]); Airtable has no unique constraint (rare
  *  dup tolerated, matching the rest of the Airtable write path). */
 export async function nextRuleCode(ctx: OrgCtx, bump = 0): Promise<string> {
-  let max = 0;
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "LEARNING_RULES", { maxRecords: 500 });
-    max = rows.reduce((m, r) => Math.max(m, Number(S(r["Instance"]).replace(/\D/g, "")) || 0), 0);
-  } else {
-    const rules = await db(ctx).platLearningRule.findMany({
-      where: { orgId: ctx.orgId },
-      select: { ruleCode: true },
-    });
-    max = rules.reduce((m, r) => Math.max(m, Number(r.ruleCode.replace(/\D/g, "")) || 0), 0);
-  }
+  const rules = await db(ctx).platLearningRule.findMany({
+    where: { orgId: ctx.orgId },
+    select: { ruleCode: true },
+  });
+  const max = rules.reduce((m, r) => Math.max(m, Number(r.ruleCode.replace(/\D/g, "")) || 0), 0);
   return `LRN-${String(max + 1 + bump).padStart(4, "0")}`;
 }
 
@@ -687,16 +475,6 @@ export async function createRuleWithCode(
   ctx: OrgCtx,
   data: RuleCreateData,
 ): Promise<{ id: string; ruleCode: string }> {
-  if (airtableEnabled(ctx)) {
-    const ruleCode = await nextRuleCode(ctx);
-    const map = airtableMapFor("learning_rule")!;
-    const rec = await core.create(
-      ctx.orgSlug,
-      map.table,
-      toFields(map, { ...(data as Record<string, unknown>), ruleCode }, "create"),
-    );
-    return { id: rec.id, ruleCode };
-  }
   const { sourceHypothesisAirId: _airHyp, dateIssued: _issued, ...pgData } = data;
   void _airHyp;
   void _issued;
@@ -741,63 +519,6 @@ export async function promoteHypothesisToRule(
   id: RecordId,
   kind: "adjustment" | "guidance" = "adjustment",
 ): Promise<string | null> {
-  if (airtableEnabled(ctx)) {
-    const rec = await core.get(ctx.orgSlug, "HYPOTHESES", String(id)).catch(() => null);
-    if (!rec) return null;
-    const h = airHypothesis(rec);
-    if (
-      h.sampleCount < VALIDATION_THRESHOLDS[h.hypothesisType] ||
-      h.consistency < DIRECTION_CONSISTENT_AT
-    ) {
-      return null; // not validated — Stage 3 gate
-    }
-    const effectiveKind =
-      h.hypothesisType !== "Scope Creep Pattern" && h.avgVariancePct !== 0 && kind === "adjustment"
-        ? "adjustment"
-        : "guidance";
-    let adjustment = "{}";
-    if (effectiveKind === "adjustment") {
-      const variances = (await core.list(ctx.orgSlug, "CORRECTIONS", { maxRecords: 1000 }))
-        .filter(
-          (c) =>
-            Array.isArray(c["Hypothesis"]) &&
-            (c["Hypothesis"] as unknown[]).map(String).includes(String(id)),
-        )
-        .map((c) => (typeof c["Variance_Percent"] === "number" ? (c["Variance_Percent"] as number) : null))
-        .filter((v): v is number => v != null);
-      const signed = variances.length
-        ? variances.reduce((s, v) => s + v, 0) / variances.length
-        : h.avgVariancePct;
-      const mult = Math.round((1 + signed / 100) * 1000) / 1000;
-      const adj: Adjustment =
-        h.dimension === "contingency"
-          ? { type: "contingency_pct", value: Math.abs(h.avgVariancePct) }
-          : { type: "dimension_multiplier", value: mult, dimension: h.dimension };
-      adjustment = JSON.stringify(adj);
-    }
-    const rule = await createRuleWithCode(ctx, {
-      kind: effectiveKind,
-      description: h.description,
-      dimension: h.dimension,
-      triggerCondition: h.triggerCondition,
-      adjustment,
-      priority: 3,
-      confidence: promotionConfidence(h.sampleCount, h.hypothesisType),
-      isActive: false, // Draft — owner activates
-      autoApply: false,
-      dateIssued: new Date(),
-      sourceHypothesisAirId: String(id),
-    });
-    // Spec 12 governance: new rules start Owner_Only (best-effort — the column
-    // lands via schema-drift migration).
-    await setRuleOverrideLevel(ctx, rule.id, "owner_only");
-    await core.update(ctx.orgSlug, "HYPOTHESES", String(id), {
-      Status: "promoted",
-      Promote_to_Rule: true,
-    });
-    return rule.id;
-  }
-
   const h = await db(ctx).platHypothesis.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!h) return null;
 
@@ -879,48 +600,8 @@ export interface RuleRow {
   lastTriggered: string;
 }
 
-const RULE_ACTIVE_STATUSES = new Set(["Published", "Updated"]);
-
-/** Read an Airtable LEARNING_RULES row into the neutral shape — the exact
- *  inverse of the learning_rule field map (fieldMaps.ts). */
-function ruleFromAirtable(r: Record<string, unknown> & { id: string }): RuleRow {
-  const adjustment = S(r["Operational_Directive"]) || "{}";
-  let dimension = "";
-  try {
-    const adj = JSON.parse(adjustment) as { dimension?: unknown };
-    if (adj && typeof adj.dimension === "string") dimension = adj.dimension;
-  } catch {
-    /* not an adjustment rule */
-  }
-  return {
-    id: r.id,
-    ruleCode: S(r["Instance"]),
-    kind: S(r["Rule_Type"]).toLowerCase() === "adjustment" ? "adjustment" : "guidance",
-    description: S(r["Rule_Description"]) || S(r["Rule_Name"]),
-    dimension,
-    triggerCondition: S(r["Trigger_Context"]) || "{}",
-    adjustment,
-    priority: N(r["Priority"]),
-    confidence: N(r["Confidence_Level"]),
-    isActive: RULE_ACTIVE_STATUSES.has(S(r["Rule_Status"])),
-    autoApply: S(r["Applies_To"]) === "AI Layer Only",
-    cannotOverride: r["Override_Permission"] === false,
-    timesTriggered: N(r["Times_Triggered"]),
-    overrideLevel: parseOverrideLevel(r["Override_Level"], r["Override_Permission"] === false),
-    applicationWindow: parseApplicationWindow(r["Application_Window"]),
-    lastTriggered: S(r["Last_Triggered"]).slice(0, 10),
-  };
-}
-
 export async function getActiveRules(ctx: OrgCtx): Promise<RuleRow[]> {
   // Spec 12 session protocol: Active rules sorted by Priority descending.
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "LEARNING_RULES", { maxRecords: 500 });
-    return rows
-      .map(ruleFromAirtable)
-      .filter((r) => r.isActive)
-      .sort((a, b) => b.priority - a.priority || b.confidence - a.confidence);
-  }
   const rows = await db(ctx).platLearningRule.findMany({
     where: { orgId: ctx.orgId, isActive: true },
     orderBy: [{ priority: "desc" }, { confidence: "desc" }],
@@ -1001,27 +682,14 @@ export async function applyRules(
     const newAutoApply =
       newConfidence >= settings.autoApplyConfidence &&
       r.timesTriggered + 1 >= settings.autoApplyTriggers;
-    if (airtableEnabled(ctx)) {
-      await core.update(ctx.orgSlug, "LEARNING_RULES", r.id, {
-        Times_Triggered: r.timesTriggered + 1,
-        Last_Triggered: new Date().toISOString().slice(0, 10),
-        Confidence_Level: newConfidence,
-        Applies_To: newAutoApply ? "AI Layer Only" : "Owner Review",
-      });
-      // Governance ladder bookkeeping (separate best-effort update — the
-      // Application_Window column lands via schema-drift migration; an
-      // unmigrated base must not fail the firing above).
-      await writeRuleLadder(ctx, r.id, ladderAfterEvent(r.overrideLevel, r.applicationWindow, true));
-    } else {
-      await db(ctx).platLearningRule.update({
-        where: { id: Number(r.id) },
-        data: {
-          timesTriggered: { increment: 1 },
-          confidence: newConfidence,
-          autoApply: newAutoApply,
-        },
-      });
-    }
+    await db(ctx).platLearningRule.update({
+      where: { id: Number(r.id) },
+      data: {
+        timesTriggered: { increment: 1 },
+        confidence: newConfidence,
+        autoApply: newAutoApply,
+      },
+    });
   }
   return applied;
 }
@@ -1036,26 +704,6 @@ export async function recordRuleOverride(
   ctx: OrgCtx,
   ruleCode: string,
 ): Promise<{ confidence: number; underReview: boolean } | null> {
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "LEARNING_RULES", { maxRecords: 500 });
-    const row = rows.find((r) => S(r["Instance"]) === ruleCode);
-    if (!row) return null;
-    const rule = ruleFromAirtable(row);
-    const confidence = Math.max(0, rule.confidence - RULE_OVERRIDE_DECAY);
-    const underReview = confidence <= RULE_UNDER_REVIEW_AT;
-    await core.update(ctx.orgSlug, "LEARNING_RULES", rule.id, {
-      Confidence_Level: confidence,
-      ...(underReview ? { Rule_Status: "Under Review" } : {}),
-    });
-    // Governance ladder: an override pushes onto the rolling window; >3
-    // overrides in the last 10 demote the rule one level (never deleted).
-    await writeRuleLadder(
-      ctx,
-      rule.id,
-      ladderAfterEvent(rule.overrideLevel, rule.applicationWindow, false),
-    );
-    return { confidence, underReview };
-  }
   const rule = await db(ctx).platLearningRule.findFirst({
     where: { orgId: ctx.orgId, ruleCode },
   });
@@ -1081,21 +729,14 @@ async function writeRuleLadder(
   state: { window: boolean[]; level: OverrideLevel; demoted: boolean },
 ): Promise<void> {
   try {
-    if (!airtableEnabled(ctx)) {
-      const id = Number(ruleId);
-      if (!Number.isInteger(id)) return;
-      await db(ctx).platLearningRule.update({
-        where: { id },
-        data: {
-          applicationWindow: serializeApplicationWindow(state.window),
-          ...(state.demoted ? { overrideLevel: state.level } : {}),
-        },
-      });
-      return;
-    }
-    await core.update(ctx.orgSlug, "LEARNING_RULES", ruleId, {
-      Application_Window: serializeApplicationWindow(state.window),
-      ...(state.demoted ? { Override_Level: overrideLevelOption(state.level) } : {}),
+    const id = Number(ruleId);
+    if (!Number.isInteger(id)) return;
+    await db(ctx).platLearningRule.update({
+      where: { id },
+      data: {
+        applicationWindow: serializeApplicationWindow(state.window),
+        ...(state.demoted ? { overrideLevel: state.level } : {}),
+      },
     });
   } catch {
     /* ladder columns absent (pre-migration base) — legacy behaviour stands */
@@ -1111,15 +752,9 @@ export async function setRuleOverrideLevel(
   level: OverrideLevel,
 ): Promise<void> {
   try {
-    if (!airtableEnabled(ctx)) {
-      const id = Number(ruleId);
-      if (!Number.isInteger(id)) return;
-      await db(ctx).platLearningRule.update({ where: { id }, data: { overrideLevel: level } });
-      return;
-    }
-    await core.update(ctx.orgSlug, "LEARNING_RULES", ruleId, {
-      Override_Level: overrideLevelOption(level),
-    });
+    const id = Number(ruleId);
+    if (!Number.isInteger(id)) return;
+    await db(ctx).platLearningRule.update({ where: { id }, data: { overrideLevel: level } });
   } catch {
     /* column absent (pre-migration base) */
   }
@@ -1131,23 +766,14 @@ export async function setRuleOverrideLevel(
  *  there, which would fire unrelated rules. Dual-store (cascade engine runs on
  *  both since migration-plan Phase 3; PG has no Last_Triggered column). */
 export async function markRuleApplied(ctx: OrgCtx, rule: RuleRow): Promise<void> {
-  if (!airtableEnabled(ctx)) {
-    const id = Number(rule.id);
-    if (!Number.isInteger(id)) return;
-    await db(ctx).platLearningRule.update({
-      where: { id },
-      data: {
-        timesTriggered: rule.timesTriggered + 1,
-        confidence: Math.min(RULE_CONFIDENCE_MAX, rule.confidence + 1),
-      },
-    });
-    await writeRuleLadder(ctx, rule.id, ladderAfterEvent(rule.overrideLevel, rule.applicationWindow, true));
-    return;
-  }
-  await core.update(ctx.orgSlug, "LEARNING_RULES", rule.id, {
-    Times_Triggered: rule.timesTriggered + 1,
-    Last_Triggered: new Date().toISOString().slice(0, 10),
-    Confidence_Level: Math.min(RULE_CONFIDENCE_MAX, rule.confidence + 1),
+  const id = Number(rule.id);
+  if (!Number.isInteger(id)) return;
+  await db(ctx).platLearningRule.update({
+    where: { id },
+    data: {
+      timesTriggered: rule.timesTriggered + 1,
+      confidence: Math.min(RULE_CONFIDENCE_MAX, rule.confidence + 1),
+    },
   });
   await writeRuleLadder(ctx, rule.id, ladderAfterEvent(rule.overrideLevel, rule.applicationWindow, true));
 }
@@ -1187,14 +813,6 @@ export async function learningPromptText(ctx: OrgCtx): Promise<string> {
 
 /** Corrections with a variance, from the active backend. */
 async function snapshotCorrections(ctx: OrgCtx): Promise<{ variancePct: number | null }[]> {
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "CORRECTIONS", { maxRecords: 1000 });
-    return rows
-      .map((r) => ({
-        variancePct: typeof r["Variance_Percent"] === "number" ? (r["Variance_Percent"] as number) : null,
-      }))
-      .filter((c) => c.variancePct != null);
-  }
   return db(ctx).platCorrection.findMany({
     where: { orgId: ctx.orgId, variancePct: { not: null } },
     select: { variancePct: true },
@@ -1203,20 +821,11 @@ async function snapshotCorrections(ctx: OrgCtx): Promise<{ variancePct: number |
 
 /** Count of pending hypotheses, from the active backend. */
 async function snapshotPendingHyp(ctx: OrgCtx): Promise<number> {
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "HYPOTHESES", { maxRecords: 500 });
-    return rows.filter((r) => (S(r["Status"]) || "pending") === "pending").length;
-  }
   return db(ctx).platHypothesis.count({ where: { orgId: ctx.orgId, status: "pending" } });
 }
 
 /** Total + completed job counts from the active backend. */
 async function snapshotJobCounts(ctx: OrgCtx): Promise<{ total: number; completed: number }> {
-  if (airtableEnabled(ctx)) {
-    const jobs = await core.list(ctx.orgSlug, "JOBS", { maxRecords: 1000 });
-    const done = new Set(["completed", "archived"]);
-    return { total: jobs.length, completed: jobs.filter((j) => done.has(S(j["Status"]))).length };
-  }
   const [total, completed] = await Promise.all([
     db(ctx).platJob.count({ where: { orgId: ctx.orgId } }),
     db(ctx).platJob.count({ where: { orgId: ctx.orgId, status: { in: ["completed", "archived"] } } }),
@@ -1226,17 +835,6 @@ async function snapshotJobCounts(ctx: OrgCtx): Promise<{ total: number; complete
 
 /** Average confidence of the most recent snapshot (for the trajectory delta). */
 async function snapshotPrevAvg(ctx: OrgCtx): Promise<number | null> {
-  if (airtableEnabled(ctx)) {
-    const recs = await core.list(ctx.orgSlug, "INTELLIGENCE_SNAPSHOT", { maxRecords: 50 });
-    if (!recs.length) return null;
-    const latest = recs.sort((a, b) => S(b["Snapshot_Date"]).localeCompare(S(a["Snapshot_Date"])))[0];
-    try {
-      const m = JSON.parse(S(latest["Accuracy_Summary"]) || "{}") as { avgConfidence?: unknown };
-      return typeof m.avgConfidence === "number" ? m.avgConfidence : null;
-    } catch {
-      return null;
-    }
-  }
   const prev = await db(ctx).platIntelligenceSnapshot.findFirst({
     where: { orgId: ctx.orgId },
     orderBy: { capturedAt: "desc" },
@@ -1285,33 +883,6 @@ export async function snapshotIntelligence(ctx: OrgCtx): Promise<number> {
     triggers: r.timesTriggered,
     desc: r.description,
   }));
-
-  if (airtableEnabled(ctx)) {
-    const day = new Date().toISOString().slice(0, 10);
-    // Rich app metrics ride in Accuracy_Summary JSON so learningSource can
-    // recover accuracy/autoApply/avgConfidence the canonical columns lack.
-    await core.create(ctx.orgSlug, "INTELLIGENCE_SNAPSHOT", {
-      Snapshot_Name: `Snapshot ${day}`,
-      Snapshot_Date: day,
-      Total_Jobs_Completed: completedJobs,
-      Total_Corrections: corrections.length,
-      Total_Active_Rules: rules.length,
-      Average_Variance_Percent: accuracy != null ? Math.round((100 - accuracy) * 10) / 10 : 0,
-      Known_Gaps: gaps.join("; "),
-      Accuracy_Summary: JSON.stringify({
-        accuracyRatePct: accuracy,
-        activeRules: rules.length,
-        autoApplyRules,
-        avgConfidence,
-        gaps,
-        trajectory,
-        corrections: corrections.length,
-        totalJobs,
-        topRules,
-      }),
-    });
-    return 0; // Airtable has no numeric snapshot id
-  }
 
   const snap = await db(ctx).platIntelligenceSnapshot.create({
     data: {

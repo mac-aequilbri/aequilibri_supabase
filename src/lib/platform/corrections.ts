@@ -5,12 +5,8 @@
 //
 // Spec 12 Module 6 Stage 1 (Capture): every correction carries a Source_Module
 // (which module produced the corrected value), one of the five Root_Cause
-// categories, and a Correction_Direction. The Airtable CORRECTIONS table
-// predates those columns, so Root_Cause holds the category (the clusterable
-// value), Description holds the free-text detail, and sourceModule/direction
-// ride in the Notes JSON until the template gains dedicated fields.
+// categories, and a Correction_Direction.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import { recordRuleOverride } from "@/services/platform/learning";
 import { Actor, OrgCtx } from "./types";
@@ -97,67 +93,24 @@ export async function emitCorrection(
     ...(direction ? { _direction: direction } : {}),
   };
 
-  // Airtable system of record: Root_Cause carries the category (the value the
-  // hypothesis engine clusters on, per Spec 12 Stage 2), Description carries
-  // the human-readable detail; app-only columns ride in Notes JSON; the
-  // Hypothesis link is set later by runHypothesisEngine. The execution-log
-  // audit stays Postgres (best effort).
-  let correctionId: RecordId;
-  if (airtableEnabled(ctx)) {
-    const rec = await core.create(ctx.orgSlug, "CORRECTIONS", {
-      Field_Corrected: input.dimension,
-      Root_Cause: input.rootCauseCategory,
-      Description: input.rootCause.trim(),
-      Variance_Percent: variancePct ?? undefined,
-      AI_Output: input.aiValueText || (input.aiValue != null ? String(input.aiValue) : ""),
-      Human_Correction:
-        input.humanValueText || (input.humanValue != null ? String(input.humanValue) : ""),
-      Corrected_By: actor.name,
-      Rule_Generated: false,
-      // Session-protocol anchor: "corrections since the last session" counts on
-      // this date (the canonical column pre-exists; createdTime isn't exposed).
-      Date_Found: new Date().toISOString().slice(0, 10),
-      Notes: JSON.stringify({
-        jobId: input.jobId,
-        entityType: input.entityType,
-        entityId: input.entityId,
-        sourceModule: input.sourceModule,
-        direction,
-        rootCauseDetail: input.rootCause.trim(),
-        context,
-      }),
-    });
-    correctionId = rec.id;
-    // Spec 12 first-class columns (lock plan §6.4): Source_Module and
-    // Correction_Direction are schema-drift-provisioned — written as a
-    // separate best-effort update so an unmigrated base still gets the
-    // correction (the values also ride in Notes JSON for legacy reads).
-    await core
-      .update(ctx.orgSlug, "CORRECTIONS", rec.id, {
-        Source_Module: input.sourceModule,
-        ...(direction ? { Correction_Direction: direction } : {}),
-      })
-      .catch(() => {});
-  } else {
-    const correction = await db(ctx).platCorrection.create({
-      data: {
-        orgId: ctx.orgId,
-        jobId: input.jobId,
-        entityType: input.entityType,
-        entityId: input.entityId,
-        dimension: input.dimension,
-        aiValue: input.aiValue,
-        humanValue: input.humanValue,
-        aiValueText: input.aiValueText ?? "",
-        humanValueText: input.humanValueText ?? "",
-        variancePct,
-        rootCause: input.rootCauseCategory,
-        context: JSON.stringify({ ...context, _note: input.rootCause.trim() }),
-        correctedBy: actor.name,
-      },
-    });
-    correctionId = correction.id;
-  }
+  const correction = await db(ctx).platCorrection.create({
+    data: {
+      orgId: ctx.orgId,
+      jobId: input.jobId,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      dimension: input.dimension,
+      aiValue: input.aiValue,
+      humanValue: input.humanValue,
+      aiValueText: input.aiValueText ?? "",
+      humanValueText: input.humanValueText ?? "",
+      variancePct,
+      rootCause: input.rootCauseCategory,
+      context: JSON.stringify({ ...context, _note: input.rootCause.trim() }),
+      correctedBy: actor.name,
+    },
+  });
+  const correctionId: RecordId = correction.id;
 
   // Spec 12 Override_Permission governance: a correction that overrides a rule
   // decays that rule's confidence. Best effort — a failed decay must not lose
@@ -174,40 +127,25 @@ export async function emitCorrection(
     sourceModule: input.sourceModule,
     direction,
   });
-  // Audit failure must not lose the correction. Airtable mode audits into the
-  // org base's EXECUTION_LOG (Postgres may not exist at all in that world).
-  if (airtableEnabled(ctx)) {
-    await core
-      .create(ctx.orgSlug, "EXECUTION_LOG", {
-        Log_Entry: `correction ${input.dimension}`.slice(0, 200),
-        Action_Type: "Create",
-        Tables_Affected: "CORRECTIONS",
-        Summary: auditPayload,
-        Initiated_By: actor.type === "ai" ? "AI" : actor.type === "human" ? "Owner" : "System",
-        Status: "Done",
-        Date_Time: new Date().toISOString(),
-      })
-      .catch(() => {});
-  } else {
-    await db(ctx).platExecutionLog
-      .create({
-        data: {
-          orgId: ctx.orgId,
-          jobId: input.jobId,
-          actorType: actor.type,
-          actorName: actor.name,
-          operation: "create",
-          targetTable: "plat_core_correction",
-          targetId: typeof correctionId === "number" ? correctionId : null,
-          result: "",
-          payload: auditPayload,
-          status: "executed",
-          executedAt: new Date(),
-          sourceMessageId: actor.sourceMessageId,
-        },
-      })
-      .catch(() => {});
-  }
+  // Audit failure must not lose the correction.
+  await db(ctx).platExecutionLog
+    .create({
+      data: {
+        orgId: ctx.orgId,
+        jobId: input.jobId,
+        actorType: actor.type,
+        actorName: actor.name,
+        operation: "create",
+        targetTable: "plat_core_correction",
+        targetId: typeof correctionId === "number" ? correctionId : null,
+        result: "",
+        payload: auditPayload,
+        status: "executed",
+        executedAt: new Date(),
+        sourceMessageId: actor.sourceMessageId,
+      },
+    })
+    .catch(() => {});
 
   return correctionId;
 }

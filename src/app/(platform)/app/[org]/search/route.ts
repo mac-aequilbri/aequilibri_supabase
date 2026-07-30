@@ -5,11 +5,8 @@
 // org-global. Returns a small, typed, grouped result set the client renders.
 
 import { NextRequest, NextResponse } from "next/server";
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
-import { VARIATION_FILTER } from "@/lib/platform/changeLog";
 import { requireOrgCtx } from "@/lib/platform/org-context";
-import { listOptional } from "@/lib/platform/optionalList";
 import { orgPath } from "@/lib/platform/paths";
 import { currentJobScope, scopeRows } from "@/lib/platform/rls";
 
@@ -24,20 +21,6 @@ interface Hit {
 
 const PER_TYPE = 5;
 
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
-function contains(v: unknown, q: string): boolean {
-  return str(v).toLowerCase().includes(q.toLowerCase());
-}
-
-/** Airtable "Job" link → first linked job rec id, or null (org-global). */
-function jobOf(r: Record<string, unknown>): string | null {
-  const link = r["Job"];
-  return Array.isArray(link) && link.length > 0 ? String(link[0]) : null;
-}
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ org: string }> },
@@ -50,65 +33,13 @@ export async function GET(
   const p = (path: string) => orgPath(ctx.orgSlug, path);
   const take = PER_TYPE;
   const scope = await currentJobScope(ctx);
-  if (airtableEnabled(ctx)) {
-    // VARIATIONS live in CHANGE_LOG now; VENDORS/QUOTES are optional Domain-tier
-    // tables absent from Spec 12 construction bases — read tolerantly so a
-    // missing table yields no hits rather than 403-ing the whole search.
-    const [jobs, actions, risks, decisions, variations, documents, vendors, quotes] =
-      await Promise.all([
-        core.list(ctx.orgSlug, "JOBS", { maxRecords: 500 }),
-        core.list(ctx.orgSlug, "ISSUES", { maxRecords: 500 }),
-        core.list(ctx.orgSlug, "RISKS", { maxRecords: 500 }),
-        core.list(ctx.orgSlug, "DECISIONS", { maxRecords: 500 }),
-        core.list(ctx.orgSlug, "CHANGE_LOG", { maxRecords: 500, filterByFormula: VARIATION_FILTER }),
-        core.list(ctx.orgSlug, "DOCUMENTS", { maxRecords: 500 }),
-        listOptional(ctx.orgSlug, "VENDORS", { maxRecords: 500 }),
-        listOptional(ctx.orgSlug, "QUOTES", { maxRecords: 500 }),
-      ]);
-    const results: Hit[] = [
-      ...scopeRows(jobs, (j) => j.id, scope)
-        .filter((j) => contains(j["Job_Name"], q))
-        .slice(0, take)
-        .map((j) => ({ type: "Project", label: str(j["Job_Name"]), sublabel: "", href: p(`/projects/${j.id}`) })),
-      ...scopeRows(actions, jobOf, scope)
-        .filter((a) => contains(a["Action_Name"], q))
-        .slice(0, take)
-        .map((a) => ({ type: "Action", label: str(a["Action_Name"]), sublabel: str(a["Status"]), href: p(`/actions/${a.id}`) })),
-      ...scopeRows(risks, jobOf, scope)
-        .filter((r) => contains(r["Risk"], q))
-        .slice(0, take)
-        .map((r) => ({ type: "Risk", label: str(r["Risk"]), sublabel: str(r["Status"]), href: p(`/risks/${r.id}`) })),
-      ...scopeRows(decisions, jobOf, scope)
-        .filter((d) => contains(d["Decision_Name"], q) || contains(d["Decision_Description"], q))
-        .slice(0, take)
-        .map((d) => ({ type: "Decision", label: str(d["Decision_Name"]), sublabel: str(d["Status"]), href: p(`/decisions/${d.id}`) })),
-      ...scopeRows(variations, jobOf, scope)
-        .filter((v) => contains(v["Change_Name"], q) || contains(v["Ref_Number"], q))
-        .slice(0, take)
-        .map((v) => ({ type: "Variation", label: str(v["Change_Name"]), sublabel: str(v["Ref_Number"]) || str(v["Status"]), href: p(`/variations/${v.id}`) })),
-      ...scopeRows(documents, jobOf, scope)
-        .filter((d) => contains(d["Document_Name"], q))
-        .slice(0, take)
-        .map((d) => ({ type: "Document", label: str(d["Document_Name"]), sublabel: str(d["Document_Type"]), href: p(`/documents/${d.id}`) })),
-      ...vendors
-        .filter((v) => contains(v["Vendor_Name"], q))
-        .slice(0, take)
-        .map((v) => ({ type: "Vendor", label: str(v["Vendor_Name"]), sublabel: str(v["Category"]), href: p(`/vendors/${v.id}`) })),
-      ...scopeRows(quotes, jobOf, scope)
-        .filter((q2) => contains(q2["Title"], q) || contains(q2["Ref_Number"], q))
-        .slice(0, take)
-        .map((q2) => ({ type: "Quote", label: str(q2["Title"]), sublabel: str(q2["Ref_Number"]) || str(q2["Status"]), href: p(`/quotes/${q2.id}`) })),
-    ];
-    return NextResponse.json({ results });
-  }
 
   const where = { orgId: ctx.orgId };
   const [jobs, actions, risks, decisions, variations, documents, vendors, quotes] =
     await Promise.all([
       db(ctx).platJob.findMany({
-        // Case-insensitive to match the Airtable branch above, which lowercases
-        // both sides — without `mode` Postgres `contains` is case-sensitive, so
-        // "maleny" found nothing while "Maleny" did.
+        // Case-insensitive — without `mode` Postgres `contains` is
+        // case-sensitive, so "maleny" found nothing while "Maleny" did.
         where: {
           ...where,
           OR: [

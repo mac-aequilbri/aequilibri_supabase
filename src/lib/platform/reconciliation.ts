@@ -10,13 +10,9 @@
 // an open ISSUES exception.
 //
 // Postgres writes re-read through the same validated Prisma layer that wrote
-// them, so reconciliation applies to the Airtable (system-of-record) path.
+// them, so reconciliation only ever applied to the Airtable (system-of-record)
+// path — with that backend decommissioned, reconcileAirtableWrite is a no-op.
 
-import { airtableEnabled, core } from "@/lib/airtable";
-import { airtableMapFor, toFields } from "@/lib/airtable/fieldMaps";
-import { emitCorrection } from "@/lib/platform/corrections";
-import { enforceVocab } from "@/lib/platform/vocab";
-import { logger } from "@/lib/logger";
 import type { Actor, OrgCtx } from "@/lib/platform/types";
 
 export interface FieldMismatch {
@@ -71,86 +67,3 @@ export function diffStoredVsSubmitted(
   return out;
 }
 
-/** Re-read an Airtable record just written and reconcile stored vs submitted.
- *  Best-effort by design: a reconciliation failure must never fail or undo the
- *  write it checks. Returns the mismatches found (empty = clean). */
-export async function reconcileAirtableWrite(
-  ctx: OrgCtx,
-  table: string,
-  op: "create" | "update",
-  data: Record<string, unknown>,
-  recordId: number | string | undefined,
-  actor: Actor,
-): Promise<FieldMismatch[]> {
-  if (!airtableEnabled(ctx) || recordId == null || typeof recordId !== "string") return [];
-  const map = airtableMapFor(table);
-  if (!map) return [];
-
-  try {
-    const sent = toFields(map, data, op);
-    // Mirror the write path: vocab coercion ran on the fields actually sent,
-    // and derived cells (no `from`, e.g. write-time timestamps) recompute to
-    // different values here — comparing either would flag every write.
-    enforceVocab(map.table, sent);
-    for (const s of map.specs) if (!s.from) delete sent[s.air];
-    const rec = await core.get(ctx.orgSlug, map.table, recordId);
-    const mismatches = diffStoredVsSubmitted(sent, rec as Record<string, unknown>);
-    if (!mismatches.length) return [];
-
-    // Root cause on a confirmed mismatch (Spec 12): CORRECTIONS with
-    // Root_Cause = Data Quality naming field, submitted and stored value.
-    const jobId = typeof data.jobId === "number" ? data.jobId : undefined;
-    for (const m of mismatches) {
-      await emitCorrection(
-        ctx,
-        { type: "system", name: "Post-write reconciliation" },
-        {
-          jobId,
-          entityType: table,
-          dimension: `${table}.${m.field}`,
-          aiValueText: m.submitted,
-          humanValueText: m.stored,
-          sourceModule: "module2",
-          rootCauseCategory: "Data Quality",
-          rootCause: `Post-write mismatch on ${map.table}.${m.field} (${recordId}): submitted "${m.submitted}", stored "${m.stored}". Confirm whether this was a manual edit in the base before treating it as a write error.`,
-          context: { table, op, recordId },
-        },
-      ).catch(() => {});
-    }
-
-    // Surface as an exception for owner review: one open ISSUES record per
-    // reconciliation event. Written via the field map directly — routing it
-    // through writeRecord would re-trigger reconciliation on the exception
-    // record itself.
-    const actionMap = airtableMapFor("action");
-    if (actionMap) {
-      await core
-        .create(
-          ctx.orgSlug,
-          actionMap.table,
-          toFields(
-            actionMap,
-            {
-              title: `Post-write mismatch: ${map.table} ${recordId}`,
-              detail:
-                `Stored values differ from the submitted payload (writer: ${actor.name}).\n` +
-                mismatches
-                  .map((m) => `• ${m.field}: submitted "${m.submitted}" → stored "${m.stored}"`)
-                  .join("\n") +
-                `\nDo not silently accept the stored value — confirm with the owner whether it was a manual edit made directly in the base.`,
-              status: "open",
-              priority: "P1",
-              issueType: "Blocker",
-              jobId,
-            },
-            "create",
-          ),
-        )
-        .catch(() => {});
-    }
-    return mismatches;
-  } catch (err) {
-    logger.error("Post-write reconciliation failed", { orgId: ctx.orgId, table, recordId, err: String(err) });
-    return [];
-  }
-}

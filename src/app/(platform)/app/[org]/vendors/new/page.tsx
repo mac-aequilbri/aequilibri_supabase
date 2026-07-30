@@ -1,8 +1,6 @@
-import { airtableEnabled } from "@/lib/airtable";
 import { CreateForm } from "@/components/form/CreateForm";
 import { PageHeader } from "@/components/PageHeader";
 import { requireOrgCtx } from "@/lib/platform/org-context";
-import { tableExists } from "@/lib/platform/optionalList";
 import { createVendor } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -13,20 +11,6 @@ export default async function NewVendorPage({
   params: Promise<{ org: string }>;
 }) {
   const ctx = await requireOrgCtx((await params).org);
-
-  // VENDORS is optional on older bases — a create can't fall back to [], so
-  // explain instead of offering a form whose save is doomed.
-  if (airtableEnabled(ctx) && !(await tableExists(ctx.orgSlug, "VENDORS"))) {
-    return (
-      <div className="p-6 max-w-xl">
-        <PageHeader title="New vendor" />
-        <div className="ae-card p-5 text-sm text-neutral-600">
-          This org&apos;s base doesn&apos;t have a <code>VENDORS</code>{" "}
-          table, so vendors can&apos;t be added here yet.
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="p-6 max-w-xl">

@@ -91,20 +91,11 @@ export default async function OrgPickerPage({
       </div>
       {deleted ? (
         <p className="mb-6 text-sm text-emerald-700">
-          Removed <strong>{deleted}</strong> from the registry.
+          Removed <strong>{deleted}</strong> from the registry. Its tenant data was <strong>not</strong>{" "}
+          deleted — the organisation is deactivated and can be restored by an operator.
           {base ? (
             <>
-              {" "}Its Airtable base was <strong>not</strong> deleted — Airtable has no base-delete API on
-              this plan, so remove it by hand:{" "}
-              <a
-                href={`https://airtable.com/${base}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline font-mono"
-              >
-                open {base} ↗
-              </a>{" "}
-              then base options → Delete base.
+              {" "}(Its legacy Airtable base <span className="font-mono">{base}</span> is untouched.)
             </>
           ) : null}
         </p>

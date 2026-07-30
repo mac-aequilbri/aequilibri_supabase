@@ -5,11 +5,10 @@
 // database rows.
 
 import { db, prisma } from "@/lib/db";
-import { airtableEnabled, core } from "@/lib/airtable";
 import type { ToolUse } from "@/lib/claude";
 import { writeRecord, WritableTable, type RecordId } from "@/lib/platform/recordWriter";
 import { Actor, AiAuthority, OrgCtx } from "@/lib/platform/types";
-import { currentJobScope, inScope } from "@/lib/platform/rls";
+import { currentJobScope } from "@/lib/platform/rls";
 import { roleCanQueryTable, roleCanUseTool, type ToolPolicy } from "./tools";
 
 export interface ToolOutcome {
@@ -60,61 +59,13 @@ const QUERYABLE = {
 
 async function runQuery(ctx: OrgCtx, input: Record<string, unknown>): Promise<string> {
   const table = String(input.table ?? "");
-  if (airtableEnabled(ctx)) {
-    const map = {
-      jobs: "JOBS",
-      actions: "ISSUES",
-      decisions: "DECISIONS",
-      phases: "PHASES",
-      budget_lines: "BUDGET",
-      cashflows: "CASHFLOWS",
-      risks: "RISKS",
-      variations: "CHANGE_LOG", // Spec 12: variations are Change_Type="Variation" rows
-      procurement: "PROCUREMENT",
-      vendors: "VENDORS",
-      learning_rules: "LEARNING_RULES",
-      documents: "DOCUMENTS",
-    } as const;
-    const tableName = map[table as keyof typeof map];
-    if (!tableName) return `Unknown table "${table}".`;
-    const status = typeof input.status === "string" ? input.status.trim() : "";
-    const limit = Math.min(Math.max(Number(input.limit) || 20, 1), 50);
-    const jobId = typeof input.jobId === "string" || typeof input.jobId === "number" ? String(input.jobId) : "";
-    const allRows = await core.list(ctx.orgSlug, tableName, { maxRecords: 500 });
-    // CHANGE_LOG holds every change type; the variations view is only the
-    // Change_Type="Variation" rows.
-    const rows =
-      table === "variations" ? allRows.filter((r) => r["Change_Type"] === "Variation") : allRows;
-    const withJob = ["jobs", "vendors", "learning_rules"].includes(table)
-      ? rows
-      : rows.filter((r) => {
-          const link = r["Job"];
-          return !jobId || (Array.isArray(link) && link.map(String).includes(jobId));
-        });
-    // RLS: the assistant only reads rows on the viewer's assigned jobs (no-op
-    // until TEAM assignments exist). "jobs" scopes on the record's own id;
-    // vendors/learning_rules are org-global.
-    const scope = await currentJobScope(ctx);
-    const jobOf = (r: Record<string, unknown>): string | null => {
-      if (table === "jobs") return typeof r.id === "string" ? r.id : null;
-      if (table === "vendors" || table === "learning_rules") return null;
-      const link = r["Job"];
-      return Array.isArray(link) && link.length > 0 ? String(link[0]) : null;
-    };
-    const withScope = withJob.filter((r) => inScope(scope, jobOf(r)));
-    const withStatus = !status
-      ? withScope
-      : withScope.filter((r) => String(r["Status"] ?? "").toLowerCase() === status.toLowerCase());
-    return JSON.stringify(withStatus.slice(0, limit));
-  }
   const def = QUERYABLE[table as keyof typeof QUERYABLE];
   if (!def) return `Unknown table "${table}".`;
   const { model, select } = def(ctx);
   const where: Record<string, unknown> = { orgId: ctx.orgId };
   const jobScoped = table !== "jobs" && table !== "vendors" && table !== "learning_rules";
   if (typeof input.jobId === "number" && jobScoped) where.jobId = input.jobId;
-  // RLS: constrain to the viewer's assigned jobs (Postgres path; the Airtable
-  // path above is already scoped). No-op for whole-tenant viewers.
+  // RLS: constrain to the viewer's assigned jobs. No-op for whole-tenant viewers.
   const pgScope = await currentJobScope(ctx);
   if (pgScope.mode !== "all") {
     const ids = pgScope.mode === "some" ? [...pgScope.jobIds].map(Number).filter((n) => Number.isFinite(n)) : [-1];

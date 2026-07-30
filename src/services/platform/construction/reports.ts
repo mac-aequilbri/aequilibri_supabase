@@ -1,28 +1,17 @@
 // Weekly reports — AI-generated from live job data, human approval before
 // sending (doc module 8: client-facing outputs).
 //
-// Storage model differs by backend. Postgres keeps the rich plat_con_weeklyreport
-// model (+ an immutable DOCUMENTS snapshot). Airtable (Spec 12) has no
-// WEEKLY_REPORTS table, so a report IS a DOCUMENTS row: the markdown body in
-// Text_Content, the lifecycle (week ending, draft→approved→sent) in AI_Analysis
-// under a module8 block (see reportDoc.ts). Both paths go through writeRecord, so
-// the audit log + approval discipline are unchanged.
+// Postgres keeps the rich plat_con_weeklyreport model (+ an immutable
+// DOCUMENTS snapshot). Writes go through writeRecord, so the audit log +
+// approval discipline are unchanged.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { callClaude } from "@/lib/claude";
 import { loadJobContext } from "@/lib/platform/jobContextSource";
 import { modelFor } from "@/lib/platform/modelRouter";
 import { getPrompt } from "@/lib/platform/prompts";
 import { emitOutboundEvent } from "@/lib/platform/outbox";
-import { ALL_SCOPES, FINANCE_SCOPES, reportDef, type ReportScope } from "@/lib/platform/reportCatalog";
-import {
-  buildReportAnalysis,
-  parseReportModule8,
-  patchReportAnalysis,
-  REPORT_DOC_TYPE,
-} from "@/lib/platform/reportDoc";
+import { FINANCE_SCOPES, reportDef, type ReportScope } from "@/lib/platform/reportCatalog";
 import { writeRecord, type RecordId } from "@/lib/platform/recordWriter";
-import { getStorer } from "@/lib/platform/storage";
 import { OrgCtx } from "@/lib/platform/types";
 import { generateManagedDocument } from "@/services/platform/documents";
 
@@ -239,58 +228,7 @@ export async function generateReport(
       ? `Week ending ${periodEnding}`
       : `${def.title} — ${periodEnding}`;
 
-  // Airtable (Spec 12): the report is a DOCUMENTS row — body in Text_Content,
-  // lifecycle in AI_Analysis.module8. Doc_Status stays a neutral "Active".
-  if (airtableEnabled(ctx)) {
-    const stored = await getStorer()
-      .put({ orgSlug: ctx.orgSlug, docType: REPORT_DOC_TYPE, name: `${title}.md` }, Buffer.from(content, "utf8"))
-      .catch(() => null);
-    // Supersede rule: regenerating the same (report type, period) overwrites the
-    // existing draft instead of stacking duplicates. DOCUMENTS carries no job
-    // link, so the match is per report+period (orgs are single-job today).
-    const existing = (
-      await core
-        .list(ctx.orgSlug, "DOCUMENTS", {
-          maxRecords: 500,
-          filterByFormula: `LOWER({Document_Type})='${REPORT_DOC_TYPE.toLowerCase()}'`,
-        })
-        .catch(() => [])
-    ).find((r) => {
-      const m8 = parseReportModule8(r["AI_Analysis"]);
-      return (
-        m8?.status === "draft" &&
-        m8.weekEnding === periodEnding &&
-        (m8.reportId ?? "weekly_progress") === def.id
-      );
-    });
-    const data = {
-      jobId,
-      title,
-      docType: REPORT_DOC_TYPE,
-      status: "Active",
-      uploadedBy: viewer.name,
-      textContent: content,
-      storageProvider: stored?.provider ?? "",
-      storageRef: stored?.ref ?? "",
-      aiAnalysis: buildReportAnalysis({
-        kind: "weekly_report",
-        reportId: def.id,
-        weekEnding: periodEnding,
-        status: "draft",
-        isAiGenerated: true,
-        generatedAt: new Date().toISOString(),
-      }),
-    };
-    const result = await writeRecord(
-      ctx,
-      existing
-        ? { table: "document", op: "update", recordId: existing.id, data, actor: { type: "ai", name: "Report Writer" } }
-        : { table: "document", op: "create", data, actor: { type: "ai", name: "Report Writer" } },
-    );
-    return { id: result.recordId ?? existing?.id, demoMode };
-  }
-
-  // Postgres: rich weekly_report row + an immutable DOCUMENTS snapshot for audit.
+  // Rich weekly_report row + an immutable DOCUMENTS snapshot for audit.
   const result = await writeRecord(ctx, {
     table: "weekly_report",
     op: "create",
@@ -330,11 +268,8 @@ export async function generateReport(
   return { id: result.recordId, demoMode };
 }
 
-export const CUSTOM_REPORT_ID = "custom_report";
-
-/** Phase 3: prompt-built report. The promptSpec is stored in module8 for audit
- *  and Regenerate (pass recordId to re-run the same spec onto that record —
- *  the result is a fresh draft). Airtable-only, like all catalog work. */
+/** Phase 3: prompt-built report — Airtable-only, like all catalog work, so it
+ *  is unavailable now that the Airtable backend is decommissioned. */
 export async function generateCustomReport(
   ctx: OrgCtx,
   viewer: ReportViewer,
@@ -346,53 +281,7 @@ export async function generateCustomReport(
     recordId?: RecordId;
   },
 ): Promise<{ id?: RecordId; demoMode: boolean }> {
-  if (!airtableEnabled(ctx)) throw new Error("Custom reports require the Airtable backend.");
-  const job = await loadJobContext(ctx, args.jobId);
-  if (!job) throw new Error("Job not found");
-
-  // Server-side CLS: intersect the requested scopes with what this viewer may
-  // see, whatever the client sent. Empty request = all allowed slices.
-  const requested = args.scopes.length ? args.scopes : [...ALL_SCOPES];
-  const scopes = ALL_SCOPES.filter(
-    (s) => requested.includes(s) && (viewer.financeDetail || !FINANCE_SCOPES.includes(s)),
-  );
-  const context = buildReportContext(job, scopes);
-
-  const { system } = getPrompt("reports.custom");
-  const res = await callClaude(
-    system,
-    `As at ${args.periodEnding}. Request: ${args.prompt}\n\nProject data:\n${context}`,
-    { model: modelFor("drafting"), maxTokens: 1500 },
-  );
-  const content = res.demo_mode
-    ? `_Demo mode — no API key. Request was: ${args.prompt}_`
-    : res.content.trim();
-  const title = `Custom: ${args.prompt.slice(0, 60)}${args.prompt.length > 60 ? "…" : ""} — ${args.periodEnding}`;
-
-  const data = {
-    jobId: args.jobId,
-    title,
-    docType: REPORT_DOC_TYPE,
-    status: "Active",
-    uploadedBy: viewer.name,
-    textContent: content,
-    aiAnalysis: buildReportAnalysis({
-      kind: "weekly_report",
-      reportId: CUSTOM_REPORT_ID,
-      weekEnding: args.periodEnding,
-      status: "draft",
-      isAiGenerated: true,
-      generatedAt: new Date().toISOString(),
-      promptSpec: { prompt: args.prompt, scopes, jobId: String(args.jobId) },
-    }),
-  };
-  const result = await writeRecord(
-    ctx,
-    args.recordId != null
-      ? { table: "document", op: "update", recordId: args.recordId, data, actor: { type: "ai", name: "Report Writer" } }
-      : { table: "document", op: "create", data, actor: { type: "ai", name: "Report Writer" } },
-  );
-  return { id: result.recordId ?? args.recordId, demoMode: res.demo_mode };
+  throw new Error("Custom reports require the Airtable backend.");
 }
 
 /** Legacy alias for AI/system callers (scheduler, assistant executor) — the
@@ -407,41 +296,6 @@ export function generateWeeklyReport(
 }
 
 export async function approveReport(ctx: OrgCtx, userName: string, id: RecordId): Promise<void> {
-  if (airtableEnabled(ctx)) {
-    const doc = await core.get(ctx.orgSlug, "DOCUMENTS", String(id)).catch(() => null);
-    await writeRecord(ctx, {
-      table: "document",
-      op: "update",
-      recordId: id,
-      data: {
-        aiAnalysis: patchReportAnalysis(doc?.["AI_Analysis"], {
-          status: "approved",
-          approvedBy: userName,
-          approvedAt: new Date().toISOString(),
-        }),
-      },
-      actor: { type: "human", name: userName },
-    });
-    // Spec 12 live-vs-snapshot rule (lock plan §8.6): the APPROVED report also
-    // renders as an immutable, hashed PDF DOCUMENTS snapshot — parity with the
-    // Postgres path and the tender report. Draft iterations stay cheap
-    // markdown; best-effort so a render failure never blocks the approval.
-    const title = typeof doc?.["Document_Name"] === "string" ? (doc["Document_Name"] as string) : "Report";
-    const body = typeof doc?.["Text_Content"] === "string" ? (doc["Text_Content"] as string) : "";
-    const jobLink = Array.isArray(doc?.["Job"]) && doc["Job"].length > 0 ? String(doc["Job"][0]) : undefined;
-    if (body.trim()) {
-      await generateManagedDocument(ctx, userName, {
-        jobId: jobLink,
-        title: `${title} — approved snapshot`,
-        body,
-        docType: "report",
-        outputType: "report_snapshot",
-        format: "pdf",
-        traceability: { sourceModule: "module8", sourceRecordId: String(id) },
-      }).catch(() => {});
-    }
-    return;
-  }
   await writeRecord(ctx, {
     table: "weekly_report",
     op: "update",
@@ -452,29 +306,13 @@ export async function approveReport(ctx: OrgCtx, userName: string, id: RecordId)
 }
 
 export async function markReportSent(ctx: OrgCtx, userName: string, id: RecordId): Promise<void> {
-  if (airtableEnabled(ctx)) {
-    const doc = await core.get(ctx.orgSlug, "DOCUMENTS", String(id)).catch(() => null);
-    await writeRecord(ctx, {
-      table: "document",
-      op: "update",
-      recordId: id,
-      data: {
-        aiAnalysis: patchReportAnalysis(doc?.["AI_Analysis"], {
-          status: "sent",
-          sentAt: new Date().toISOString(),
-        }),
-      },
-      actor: { type: "human", name: userName },
-    });
-  } else {
-    await writeRecord(ctx, {
-      table: "weekly_report",
-      op: "update",
-      recordId: id,
-      data: { status: "sent", sentAt: new Date().toISOString() },
-      actor: { type: "human", name: userName },
-    });
-  }
+  await writeRecord(ctx, {
+    table: "weekly_report",
+    op: "update",
+    recordId: id,
+    data: { status: "sent", sentAt: new Date().toISOString() },
+    actor: { type: "human", name: userName },
+  });
   await emitOutboundEvent(ctx, "report.ready", {
     entityType: "weekly_report",
     entityId: id,

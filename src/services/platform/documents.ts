@@ -2,8 +2,6 @@
 // naming, storage taxonomy, version tracking, email intake, and routing into
 // operational tables via approval-gated proposals.
 
-import { airtableEnabled, core } from "@/lib/airtable";
-import { formulaSafe } from "@/lib/airtable/control";
 import { callClaude } from "@/lib/claude";
 import { db, prisma } from "@/lib/db";
 import { classifyDocument, parseDocumentText } from "@/lib/platform/docs";
@@ -79,10 +77,6 @@ interface ExistingDocumentLite {
   aiAnalysis: string;
 }
 
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
 function parseJson<T>(raw: string, fallback: T): T {
   try {
     return JSON.parse(raw) as T;
@@ -143,7 +137,7 @@ async function resolveJobContext(
       body: text.body,
       sender: text.sender,
     });
-    if (airtableEnabled(ctx) || typeof resolution.jobId !== "number") {
+    if (typeof resolution.jobId !== "number") {
       return { jobId: resolution.jobId, jobCode: fallbackTitle, resolution };
     }
     const job = await db(ctx).platJob.findFirst({
@@ -151,11 +145,6 @@ async function resolveJobContext(
       select: { code: true },
     });
     return { jobId: resolution.jobId, jobCode: job?.code || fallbackTitle, resolution };
-  }
-  if (airtableEnabled(ctx)) {
-    if (jobId != null) return { jobId, jobCode: undefined };
-    const jobs = await core.list(ctx.orgSlug, "JOBS", { maxRecords: 2 });
-    return jobs.length === 1 ? { jobId: jobs[0].id, jobCode: undefined } : {};
   }
   if (typeof jobId === "number") {
     const job = await db(ctx).platJob.findFirst({
@@ -214,23 +203,6 @@ function brandedSnapshotText(input: {
 }
 
 async function existingDocuments(ctx: OrgCtx, jobId?: RecordId): Promise<ExistingDocumentLite[]> {
-  if (airtableEnabled(ctx)) {
-    const rows = await core.list(ctx.orgSlug, "DOCUMENTS", { maxRecords: 500 });
-    return rows
-      .filter((r) => {
-        if (jobId == null) return true;
-        const link = r["Job"];
-        return Array.isArray(link) && link.map(String).includes(String(jobId));
-      })
-      .map((r) => ({
-        id: r.id,
-        title: str(r["Document_Name"]),
-        status: str(r["Doc_Status"]) || "uploaded",
-        docType: str(r["Document_Type"]),
-        version: Number((parseJson<Record<string, unknown>>(str(r["AI_Analysis"]), {}).module2 as { version?: number })?.version ?? 1) || 1,
-        aiAnalysis: str(r["AI_Analysis"]) || "{}",
-      }));
-  }
   const rows = await db(ctx).platDocument.findMany({
     where: { orgId: ctx.orgId, ...(typeof jobId === "number" ? { jobId } : {}) },
     select: { id: true, title: true, status: true, docType: true, version: true, aiAnalysis: true },
@@ -399,7 +371,7 @@ async function createDocumentRecord(
       mimeType: input.mimeType || "",
       sizeBytes: input.sizeBytes || 0,
       version: canonical.version,
-      parentDocumentId: !airtableEnabled(ctx) && typeof prior?.id === "number" ? prior.id : undefined,
+      parentDocumentId: typeof prior?.id === "number" ? prior.id : undefined,
       textContent: input.textContent,
       aiSummary:
         routeSuggestions.length > 0
@@ -706,19 +678,10 @@ export interface InboundMessage {
 }
 
 /** Has a message with this storage ref already been ingested for the org?
- *  The body document is stored with `storageRef = \`${channel}:${externalId}\``
- *  (the DOCUMENTS `Drive_URL` field in Airtable), so a match means the whole
- *  message — body + attachments — was already processed. */
+ *  The body document is stored with `storageRef = \`${channel}:${externalId}\``,
+ *  so a match means the whole message — body + attachments — was already
+ *  processed. */
 async function findByExternalId(ctx: OrgCtx, storageRef: string): Promise<boolean> {
-  if (airtableEnabled(ctx)) {
-    const recs = await core
-      .list(ctx.orgSlug, "DOCUMENTS", {
-        filterByFormula: `{Drive_URL}='${formulaSafe(storageRef)}'`,
-        maxRecords: 1,
-      })
-      .catch(() => [] as unknown[]);
-    return recs.length > 0;
-  }
   const existing = await db(ctx).platDocument.findFirst({
     where: { orgId: ctx.orgId, storageRef },
     select: { id: true },
@@ -871,9 +834,7 @@ export async function analyzeDocument(
   userName: string,
   id: RecordId,
 ): Promise<{ ok: boolean; demoMode: boolean; error?: string }> {
-  const doc = airtableEnabled(ctx)
-    ? await core.get(ctx.orgSlug, "DOCUMENTS", String(id)).catch(() => null)
-    : await db(ctx).platDocument.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
+  const doc = await db(ctx).platDocument.findFirst({ where: { id: Number(id), orgId: ctx.orgId } });
   if (!doc) return { ok: false, demoMode: false, error: "Document not found" };
   const row = doc as Record<string, unknown>;
   const textContent = String(row.textContent ?? row["Text_Content"] ?? "");
@@ -929,11 +890,9 @@ export async function analyzeDocument(
     requireApproval: false,
   });
 
-  if (!airtableEnabled(ctx)) {
-    await db(ctx).platExecutionLog.updateMany({
-      where: { orgId: ctx.orgId, targetTable: "plat_core_document", targetId: Number(row.id), promptVersion: "" },
-      data: { promptVersion: version },
-    });
-  }
+  await db(ctx).platExecutionLog.updateMany({
+    where: { orgId: ctx.orgId, targetTable: "plat_core_document", targetId: Number(row.id), promptVersion: "" },
+    data: { promptVersion: version },
+  });
   return { ok: true, demoMode: res.demo_mode };
 }

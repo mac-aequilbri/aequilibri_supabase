@@ -440,6 +440,75 @@ Full detail in **docs/migration-verification-2026-07-29.md**. Summary:
 - Attachments: zero binaries on either base (re-scan at cutover).
 - demo-walk/dev orgs untouched; live Airtable untouched (read-only PAT use).
 
+---
+
+## Phase 6 — Decommission Airtable in the codebase (2026-07-30) — COMPLETE
+
+Executed in slices, each green (tsc + vitest) before the next:
+
+**A. Flag collapse.** `airtableEnabled()` → constant false; every suite stayed
+green (Postgres was already the only exercised path). Retired
+`AIRTABLE_MIGRATION` everywhere (env, vitest config, boot guard).
+
+**B. Dead-branch sweep — ~100 files.** Five parallel subagent batches on
+disjoint file sets (platform sources / services+construction / app pages /
+learning+chat / stragglers) + the engines by hand (recordWriter, controlPlane,
+cascade, outbox, org-context, onboarding). All `fromAirtable` loaders,
+Airtable write branches, PENDING_WRITES/EXECUTION_LOG mirrors, and the
+`core.*` call graph deleted. controlPlane.ts is fully self-contained (types
+inlined; `controlPlaneEnabled()` now constant true).
+
+**C. Layer deletion.** `src/lib/airtable/` reduced to THREE intentional
+remnants: `fieldMaps.ts` + `schema.generated.ts` (pure data modules —
+domainLabels resolves display labels through the field maps; the movers'
+conventions reference them) and `fieldMaps.test.ts`. Deleted: client, codecs,
+config, control(+test), generic, index, provision, rateLimiter(+test),
+ttlCache(+test), types, tables/. `optionalList.ts` deleted (zero importers).
+Remaining "airtable" mentions in src are: the `airtableRecordId` bridge
+column (the migration idempotency key — stays), legacy-status normalization
+maps, historical comments, and retirement notices.
+
+**D. Integrations + deployment (plan §6.3/§6.4/§6.5).**
+- **Outbox feed API** `GET/POST /api/platform/outbox` (Bearer
+  `OUTBOX_FEED_SECRET`, falls back to PLATFORM_WEBHOOK_SECRET) replaces n8n's
+  direct Airtable PLAT_OUTBOX polling; `demo-sunridge-outbound.json` reworked
+  to poll the feed + ack deliveries (uses n8n `$vars`, not `$env`); README
+  updated. Inbound flow was already PG-native (webhook + controlPlane).
+- **Onboarding is PG-native** (§6.4): base-clone/supply-base-id flows deleted;
+  the form provisions registry + config + seed rules + cascade rules; industry
+  mapping resolves numeric registry ids (the rec-id-only check was a latent
+  bug). Stale Airtable UI copy removed from picker/templates/integrations.
+- **render.yaml rewritten** for the PG deployment: service renamed
+  `aequilibri-postgres` (no longer matches the live service), AIRTABLE_* env
+  gone, DATABASE_URL + CONTROL_DATABASE_URL + OUTBOX_FEED_SECRET +
+  TENANT_CLIENT_CAP declared, `preDeployCommand` runs the migrate fan-out,
+  build generates both Prisma clients. AU-region note pinned at the top.
+
+**Behavioral notes (not regressions — these were Airtable-gated and
+inert-in-PG all along, now made explicit):**
+1. `closeJob.handleJobCompletion` is a no-op — the job-close variance/learning
+   hook has NO Postgres implementation yet (flagged in the file header).
+   Candidate follow-up.
+2. `assistant/context.jobContextBlock` returns "" — the rich session-context
+   block was Airtable-only; PG chat uses the leaner `dataContext`. Candidate
+   follow-up.
+3. Custom reports (`generateCustomReport`) throw as they always did in PG mode.
+4. Schema-drift monitoring formally retired (page shows a notice).
+5. emailIntel now surfaces cashflow suggestions (the "no delegate" skip was
+   stale since Phase 2); the money guard (never Paid off an email) is enforced
+   in the mapper and tested.
+6. rls-scoping suite rewritten against PG fixtures (same seams, same
+   assertions); 11 Airtable-layer unit tests left with their deleted modules
+   (304 → 293 total).
+
+**Verified:** boot guard prints exactly `data backend: postgres`; app serves
+demo-walk (shared DB) + Didi + Meridian (own DBs) with zero Airtable env vars
+consumed at runtime; tsc clean; 37 files / 293 tests green.
+
+**Still open:** owner decision 3 — `pg-to-airtable.mjs` rollback: keep through
+cutover or delete? (Left untouched.) `docs/` prose (MASTER guide etc.) still
+describes the dual-backend era — recommend an owner-reviewed docs pass.
+
 ### Known caveats carried forward
 1. **Portal-token lookup** searches the default tenant DB only — before any
    org WITH PORTAL TOKENS is activated onto its own database, token

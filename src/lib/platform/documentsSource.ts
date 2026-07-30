@@ -1,6 +1,4 @@
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
-import { loadJobLabelMap } from "./jobOptionsSource";
 import { recordInScope, scopeByJob } from "./rls";
 import type { OrgCtx } from "./types";
 
@@ -33,33 +31,6 @@ export interface DocumentDetailView extends DocumentView {
   outputType: string;
   contentHash: string;
   hashAlgo: string;
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
-
-function dateOrNull(v: unknown): Date | null {
-  const raw = str(v);
-  if (!raw) return null;
-  const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function linksTo(v: unknown, recordId: string): boolean {
-  return Array.isArray(v) && v.some((x) => String(x) === recordId);
-}
-
-function firstLink(v: unknown): string | null {
-  return Array.isArray(v) && v.length > 0 ? String(v[0]) : null;
-}
-
-function docKindFrom(row: Record<string, unknown>): string {
-  const kind = str(row["Kind"]);
-  if (kind) return kind;
-  const provider = str(row["Storage_Provider"]);
-  if (provider === "conversation" || provider === "email") return "generated";
-  return str(row["Drive_URL"]) ? "link" : "file";
 }
 
 function parseAnalysis(raw: string): Record<string, unknown> {
@@ -125,38 +96,6 @@ async function fromPostgresList(ctx: OrgCtx): Promise<DocumentView[]> {
   }));
 }
 
-async function fromAirtableList(ctx: OrgCtx): Promise<DocumentView[]> {
-  const [rows, jobLabels] = await Promise.all([
-    core.list(ctx.orgSlug, "DOCUMENTS", { maxRecords: 200 }),
-    loadJobLabelMap(ctx),
-  ]);
-  return rows.map((r) => {
-    const title = str(r["Document_Name"]) || "(untitled document)";
-    const aiAnalysis = str(r["AI_Analysis"]) || "{}";
-    const module2 = module2Meta({ title, aiAnalysis });
-    const jobRec = firstLink(r["Job"]);
-    const jobName = jobRec ? (jobLabels.get(jobRec) ?? null) : null;
-    return {
-      id: r.id,
-      title,
-      classification: str(r["Classification"]) || str(r["Document_Type"]),
-      docType: str(r["Document_Type"]),
-      kind: docKindFrom(r),
-      storageRef: str(r["Drive_URL"]),
-      storageProvider: str(r["Storage_Provider"]) || (str(r["Drive_URL"]) ? "gdrive" : "external"),
-      status: str(r["Doc_Status"]) || str(r["Status"]) || "uploaded",
-      createdAt: dateOrNull(r["Upload_Date"]),
-      uploadedBy: str(r["Uploaded_By"]),
-      aiSummary: str(r["AI_Summary"]),
-      jobCode: null,
-      jobName,
-      jobId: jobRec,
-      version: module2.version,
-      lineageKey: module2.lineageKey,
-    };
-  });
-}
-
 async function fromPostgresDetail(ctx: OrgCtx, id: string): Promise<DocumentDetailView | null> {
   const docId = Number(id);
   if (!Number.isInteger(docId)) return null;
@@ -195,75 +134,15 @@ async function fromPostgresDetail(ctx: OrgCtx, id: string): Promise<DocumentDeta
   };
 }
 
-async function fromAirtableDetail(ctx: OrgCtx, id: string): Promise<DocumentDetailView | null> {
-  if (!id.startsWith("rec")) return null;
-  const doc = await core.get(ctx.orgSlug, "DOCUMENTS", id).catch(() => null);
-  if (!doc) return null;
-  if (!(await recordInScope(ctx, doc))) return null;
-
-  const title = str(doc["Document_Name"]) || "(untitled document)";
-  const aiAnalysis = str(doc["AI_Analysis"]) || "{}";
-  const module2 = module2Meta({ title, aiAnalysis });
-
-  return {
-    id: doc.id,
-    title,
-    classification: str(doc["Classification"]) || str(doc["Document_Type"]),
-    docType: str(doc["Document_Type"]),
-    kind: docKindFrom(doc),
-    storageRef: str(doc["Drive_URL"]),
-    storageProvider: str(doc["Storage_Provider"]) || "external",
-    status: str(doc["Doc_Status"]) || str(doc["Status"]) || "uploaded",
-    createdAt: dateOrNull(doc["Upload_Date"]),
-    uploadedBy: str(doc["Uploaded_By"]),
-    aiSummary: str(doc["AI_Summary"]),
-    jobCode: null,
-    jobName: null,
-    jobId: firstLink(doc["Job"]),
-    version: module2.version,
-    lineageKey: module2.lineageKey,
-    confidence: typeof doc["Confidence"] === "number" ? (doc["Confidence"] as number) : null,
-    analyzedAt: dateOrNull(doc["Analyzed_At"]),
-    textContent: str(doc["Text_Content"]),
-    aiAnalysis,
-    routeSuggestions: module2.routeSuggestions,
-    immutableSnapshot: module2.immutableSnapshot,
-    outputType: module2.outputType,
-    contentHash: module2.contentHash,
-    hashAlgo: module2.hashAlgo,
-  };
-}
-
 export async function loadDocuments(ctx: OrgCtx): Promise<DocumentView[]> {
-  const rows = await (airtableEnabled(ctx) ? fromAirtableList(ctx) : fromPostgresList(ctx));
+  const rows = await fromPostgresList(ctx);
   return scopeByJob(ctx, rows, (d) => d.jobId);
 }
 
 export function loadDocumentDetail(ctx: OrgCtx, id: string): Promise<DocumentDetailView | null> {
-  return airtableEnabled(ctx) ? fromAirtableDetail(ctx, id) : fromPostgresDetail(ctx, id);
+  return fromPostgresDetail(ctx, id);
 }
 
-export async function findAirtableDocumentByJob(ctx: OrgCtx, jobId: string): Promise<DocumentView[]> {
-  if (!airtableEnabled(ctx)) return [];
-  const rows = await core.list(ctx.orgSlug, "DOCUMENTS", { maxRecords: 500 });
-  return rows
-    .filter((r) => linksTo(r["Job"], jobId))
-    .map((r) => ({
-      id: r.id,
-      title: str(r["Document_Name"]) || "(untitled document)",
-      classification: str(r["Classification"]) || str(r["Document_Type"]),
-      docType: str(r["Document_Type"]),
-      kind: docKindFrom(r),
-      storageRef: str(r["Drive_URL"]),
-      storageProvider: str(r["Storage_Provider"]) || (str(r["Drive_URL"]) ? "gdrive" : "external"),
-      status: str(r["Doc_Status"]) || str(r["Status"]) || "uploaded",
-      createdAt: dateOrNull(r["Upload_Date"]),
-      uploadedBy: str(r["Uploaded_By"]),
-      aiSummary: str(r["AI_Summary"]),
-      jobCode: null,
-      jobName: null,
-      jobId,
-      version: module2Meta({ title: str(r["Document_Name"]) || "(untitled document)", aiAnalysis: str(r["AI_Analysis"]) || "{}" }).version,
-      lineageKey: module2Meta({ title: str(r["Document_Name"]) || "(untitled document)", aiAnalysis: str(r["AI_Analysis"]) || "{}" }).lineageKey,
-    }));
+export async function findAirtableDocumentByJob(_ctx: OrgCtx, _jobId: string): Promise<DocumentView[]> {
+  return [];
 }

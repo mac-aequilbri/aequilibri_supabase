@@ -21,7 +21,6 @@ vi.mock("@/lib/platform/controlPlane", () => ({
 }));
 
 // logIntegrationAudit writes to EXECUTION_LOG — stub both backends so no real I/O.
-vi.mock("@/lib/airtable", () => ({ airtableEnabled: () => false, core: { create: vi.fn() } }));
 vi.mock("@/lib/db", () => ({ prisma: { platExecutionLog: { create: vi.fn() } } }));
 vi.mock("@/lib/logger", () => ({ logger: { warn: vi.fn() }, errMeta: () => ({}) }));
 

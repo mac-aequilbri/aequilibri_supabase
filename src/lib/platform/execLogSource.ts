@@ -1,10 +1,8 @@
-// Execution-log history source — Postgres (default) or the canonical Airtable
-// EXECUTION_LOG table when AIRTABLE_MIGRATION is enabled.
+// Execution-log history source — Postgres.
 //
 // Scope note: this source returns audit history only; pending approvals are
 // loaded separately from pendingWritesSource.
 
-import { airtableEnabled, core } from "@/lib/airtable";
 import { db, prisma } from "@/lib/db";
 import type { OrgCtx } from "./types";
 
@@ -19,10 +17,6 @@ export interface LogView {
   status: string;
   error: string;
   createdAt: Date | null;
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
 }
 
 async function fromPostgres(ctx: OrgCtx): Promise<LogView[]> {
@@ -45,27 +39,7 @@ async function fromPostgres(ctx: OrgCtx): Promise<LogView[]> {
   }));
 }
 
-async function fromAirtable(ctx: OrgCtx): Promise<LogView[]> {
-  const rows = await core.list(ctx.orgSlug, "EXECUTION_LOG", { maxRecords: 100 });
-  return rows.map((r) => {
-    const when = str(r["Date_Time"]) || str(r["Session_Date"]);
-    const contributor = r["Contributor"];
-    return {
-      id: r.id,
-      operation: str(r["Action_Type"]), // ASSUMPTION: Action_Type ~= operation
-      targetTable: str(r["Tables_Affected"]), // ASSUMPTION: free-text table list
-      actorType: str(r["Initiated_By"]).toLowerCase(), // AI|Owner|System
-      actorName: Array.isArray(contributor) && contributor.length > 0 ? "(linked)" : "",
-      approvedBy: "",
-      payload: str(r["Summary"]) || str(r["Log_Entry"]),
-      status: str(r["Status"]),
-      error: "",
-      createdAt: when ? new Date(when) : null,
-    };
-  });
-}
-
-/** Load the execution-log history from whichever backend is active. */
+/** Load the execution-log history. */
 export function loadExecLogHistory(ctx: OrgCtx): Promise<LogView[]> {
-  return airtableEnabled(ctx) ? fromAirtable(ctx) : fromPostgres(ctx);
+  return fromPostgres(ctx);
 }

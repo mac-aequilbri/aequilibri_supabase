@@ -6,13 +6,9 @@
 // register is active, cashflow granularity, portfolio activation).
 //
 // Resolution order: an Active ENGAGEMENT_TYPE_CONFIG row for the type wins;
-// otherwise the spec's four engagement-type defaults apply — so an org whose
-// base predates the table (or left it empty) behaves exactly as before.
-// Reads are TTL-cached per org (domainLabels pattern) and tolerant of the
-// table being absent on older bases.
+// otherwise the spec's four engagement-type defaults apply. There is no
+// Postgres ENGAGEMENT_TYPE_CONFIG source yet, so the defaults always govern.
 
-import { airtableEnabled, core } from "@/lib/airtable";
-import { TtlCache } from "@/lib/airtable/ttlCache";
 import type { EngagementType, OrgCtx } from "./types";
 
 /** PLAN rendering mode — Spec 12 Module 8's four modes of one view component. */
@@ -57,15 +53,6 @@ export function normalizeEngagementType(v: unknown): EngagementType | "" {
   return "";
 }
 
-function planViewFrom(v: unknown): PlanViewMode | "" {
-  const s = (typeof v === "string" ? v : "").trim().toLowerCase();
-  if (s.startsWith("gantt")) return "gantt";
-  if (s.startsWith("check")) return "checklist";
-  if (s.startsWith("workflow") || s.startsWith("state")) return "workflow";
-  if (s.startsWith("season") || s.startsWith("calendar")) return "season";
-  return "";
-}
-
 interface ConfigRow {
   engagementType: EngagementType | "";
   active: boolean;
@@ -92,41 +79,17 @@ export function resolveProfile(type: EngagementType, rows: readonly ConfigRow[])
   };
 }
 
-const cache = new TtlCache<ConfigRow[]>(10 * 60_000);
-const S = (v: unknown): string => (typeof v === "string" ? v : "");
-
-async function loadConfigRows(ctx: OrgCtx): Promise<ConfigRow[]> {
-  if (!airtableEnabled(ctx)) return [];
-  return cache.get(ctx.orgSlug, async () => {
-    try {
-      const rows = await core.list(ctx.orgSlug, "ENGAGEMENT_TYPE_CONFIG", { maxRecords: 50 });
-      return rows.map((r) => ({
-        engagementType: normalizeEngagementType(r["Engagement_Type"]),
-        active: r["Active"] === true,
-        planView: planViewFrom(r["Plan_View"]),
-        // tri-state: absent column ≠ explicitly unchecked — only a real boolean overrides
-        fullRiskRegister: typeof r["Full_Risk_Register"] === "boolean" ? r["Full_Risk_Register"] : null,
-        cashflowPeriod: S(r["Cashflow_Period"]).trim(),
-        portfolioView: r["Portfolio_View"] === true,
-      }));
-    } catch {
-      return []; // table absent on a pre-spec-12 base — defaults apply
-    }
-  });
-}
-
 /** Resolve the profile for an engagement type (default: the org's default
- *  type). Per-job callers pass the job's own type once JOBS.Engagement_Type is
- *  provisioned; until then the org default governs. */
+ *  type). No config rows exist without an ENGAGEMENT_TYPE_CONFIG source, so
+ *  the spec defaults always apply. */
 export async function getEngagementProfile(
   ctx: OrgCtx,
   engagementType?: EngagementType | "",
 ): Promise<EngagementProfile> {
   const type = engagementType || ctx.defaultEngagementType;
-  return resolveProfile(type, await loadConfigRows(ctx));
+  return resolveProfile(type, []);
 }
 
-/** Invalidate after ENGAGEMENT_TYPE_CONFIG writes (onboarding, admin edits). */
-export function invalidateEngagementProfiles(orgSlug: string): void {
-  cache.delete(orgSlug);
-}
+/** Invalidate after ENGAGEMENT_TYPE_CONFIG writes (onboarding, admin edits).
+ *  No-op — there is no cache now that the config read is constant. */
+export function invalidateEngagementProfiles(_orgSlug: string): void {}
