@@ -1,0 +1,16 @@
+# Keep the build context small and secrets out of images.
+node_modules
+.next
+.git
+.github
+.claude
+var
+coverage
+docs
+n8n
+*.md
+.env
+.env.*
+render.yaml
+Dockerfile
+.dockerignore

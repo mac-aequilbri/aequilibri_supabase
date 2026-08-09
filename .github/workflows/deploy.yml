@@ -1,0 +1,108 @@
+# CI/CD (AWS plan B5): test on every push/PR; build → ECR → migrate → deploy
+# on main once the AWS side exists.
+#
+# The deploy job is gated on repository variables so this workflow is green
+# from the first push, BEFORE the AWS account/stack exists. Workstream A
+# fills these repo variables (Settings → Actions → Variables):
+#   AWS_DEPLOY_ROLE_ARN   — OIDC role assumable by this repo (no static keys)
+#   ECR_REPOSITORY        — e.g. aequilibri-app
+#   ECS_CLUSTER           — e.g. aequilibri
+#   ECS_SERVICE           — e.g. aequilibri-app
+#   MIGRATE_TASK_DEF      — task definition family for the migrate one-off
+#   MIGRATE_NETWORK_CONFIG— JSON awsvpcConfiguration for run-task (private
+#                           subnets + app security group)
+
+name: ci-deploy
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  AWS_REGION: ap-southeast-2
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aequilibri
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aequilibri
+      CONTROL_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aequilibri_control
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Create control database
+        run: PGPASSWORD=postgres psql -h localhost -U postgres -c 'CREATE DATABASE aequilibri_control'
+      - name: Generate Prisma clients
+        run: npm run db:generate
+      - name: Migrate both schemas
+        run: npm run db:migrate
+      - run: npm run typecheck
+      - run: npm test
+
+  deploy:
+    needs: test
+    # Only main, and only once Workstream A has populated the repo variables.
+    if: github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write # OIDC — no long-lived AWS keys in GitHub
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push images (runner + migrate targets)
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPO: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          docker build --target runner  -t "$REGISTRY/$REPO:${{ github.sha }}" -t "$REGISTRY/$REPO:latest" .
+          docker build --target migrate -t "$REGISTRY/$REPO:migrate-${{ github.sha }}" -t "$REGISTRY/$REPO:migrate" .
+          docker push --all-tags "$REGISTRY/$REPO"
+      - name: Run release migrations (one-off ECS task, fail-fast)
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --task-definition "${{ vars.MIGRATE_TASK_DEF }}" \
+            --launch-type FARGATE \
+            --network-configuration '${{ vars.MIGRATE_NETWORK_CONFIG }}' \
+            --query 'tasks[0].taskArn' --output text)
+          echo "migrate task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "${{ vars.ECS_CLUSTER }}" --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "${{ vars.ECS_CLUSTER }}" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          echo "migrate exit code: $EXIT_CODE"
+          test "$EXIT_CODE" = "0"
+      - name: Deploy (stop-then-start, single task)
+        run: |
+          aws ecs update-service \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --service "${{ vars.ECS_SERVICE }}" \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}"

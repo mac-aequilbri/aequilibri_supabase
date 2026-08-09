@@ -66,15 +66,29 @@ class LocalFsStorer implements DriveStorer {
 
 let localStorer: DriveStorer | null = null;
 let driveStorer: DriveStorer | null = null;
+let s3Storer: DriveStorer | null = null;
 
 function local(): DriveStorer {
   if (!localStorer) localStorer = new LocalFsStorer();
   return localStorer;
 }
 
-/** Factory — Google Drive when the service-account env is configured
- *  (lib/platform/gdrive.ts), local filesystem otherwise. */
+function s3(): DriveStorer {
+  // Lazy require keeps the AWS SDK out of every request that never stores.
+  /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+  const mod = require("./s3storage") as typeof import("./s3storage");
+  if (!s3Storer) s3Storer = new mod.S3Storer();
+  return s3Storer;
+}
+
+/** Factory, env-driven (AWS plan B1): S3 when DOCUMENTS_BUCKET is set (the
+ *  production store — container filesystems are ephemeral), else Google
+ *  Drive when its service-account env is configured, else local filesystem
+ *  for dev/demo. */
 export function getStorer(): DriveStorer {
+  /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+  const mod = require("./s3storage") as typeof import("./s3storage");
+  if (mod.s3Enabled()) return s3();
   // Lazy require avoids a cycle (gdrive imports the interface from here).
   /* eslint-disable-next-line @typescript-eslint/no-require-imports */
   const gdrive = require("./gdrive") as typeof import("./gdrive");
@@ -88,6 +102,7 @@ export function getStorer(): DriveStorer {
 /** Resolve the storer that wrote a given document (downloads must work even
  *  after the default provider changes). */
 export function getStorerFor(provider: string): DriveStorer {
+  if (provider === "s3") return s3();
   if (provider === "gdrive") {
     /* eslint-disable-next-line @typescript-eslint/no-require-imports */
     const gdrive = require("./gdrive") as typeof import("./gdrive");

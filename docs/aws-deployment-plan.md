@@ -126,6 +126,33 @@ empty DBs and `/api/health` returns ok behind the ALB.
 Exit: image runs locally (`docker run` against the local cluster), CI green
 end-to-end into a staging service.
 
+**Status 2026-08-09 — B1–B5 code-complete (Docker unavailable on the dev
+box; image build itself verifies on AWS week):**
+- B1 ✅ `lib/platform/s3storage.ts` (provider "s3", DOCUMENTS_BUCKET/_PREFIX,
+  default credential chain, full-key refs) + `scripts/
+  migrate-local-storage-to-s3.mjs` (--dry-run / --update-refs across default
+  + provisioned tenant DBs). Selection order: s3 → gdrive → local.
+- B2 ✅ `output: "standalone"` in next.config; multi-stage Dockerfile on
+  node:24-slim (openssl for Prisma engines, non-root, build-time placeholder
+  DB URLs — the boot guard warns, not throws). VERIFIED locally without
+  Docker: `next build` produces standalone output (171 MB) containing
+  server.js, BOTH generated Prisma clients and the @napi-rs/geotiff
+  natives, and the standalone server boots and serves /api/health green
+  against the real local databases.
+- B3 ✅ (one amendment to the plan) the migrate release task is a SECOND
+  TARGET of the same Dockerfile (`--target migrate`), not the runner image:
+  the standalone output deliberately lacks the prisma CLI that
+  migrate-all-tenants.mjs needs. Same build, shared layers, two tags.
+- B4 ✅ /api/health now probes control + default tenant DBs (SELECT 1,
+  3s time-box each) alongside the auth-config check.
+- B5 ✅ `.github/workflows/deploy.yml` — test job (Postgres 16 service,
+  both schemas migrated, typecheck + vitest) runs from the first push; the
+  deploy job (OIDC → ECR → both targets → migrate run-task fail-fast →
+  force-new-deployment) is gated on repo variables Workstream A fills, so
+  CI is green before the AWS account exists. Still blocked on the GitHub
+  remote (open decision 5's repo).
+- B6 pending as planned (delete render.yaml once ECS is proven).
+
 ## 6. Workstream C — data + cutover (maps to migration-plan Phase 7.5)
 
 - C1. Provision prod DBs: run control migrations, then

@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
+    "@aws-sdk/client-s3": "^3.1106.0",
     "@clerk/nextjs": "^7.5.2",
     "@napi-rs/canvas": "^1.0.0",
     "@prisma/client": "^6.19.3",

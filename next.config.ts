@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // AWS plan B2: emit .next/standalone (server.js + traced node_modules) so
+  // the Docker runtime layer is the traced output, not the full install.
+  // Inert for `next dev` and for Render-era `next start`.
+  output: "standalone",
+
   // Native modules must not be bundled — load them from node_modules at runtime.
   serverExternalPackages: ["@napi-rs/canvas", "geotiff"],
 
