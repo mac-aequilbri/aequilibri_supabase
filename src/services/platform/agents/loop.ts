@@ -11,6 +11,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { callClaudeConversation, type ChatStreamEvent } from "@/lib/claude";
+import type { ToolContract } from "@/lib/platform/toolContract";
 import { modelFor } from "@/lib/platform/modelRouter";
 import { Actor, OrgCtx } from "@/lib/platform/types";
 import { executeToolUse, ToolOutcome } from "@/services/platform/assistant/executor";
@@ -29,7 +30,7 @@ export interface AgentLoopResult {
 
 /** The delegate tool offered to an agent — an enum of the specialists it may
  *  hand off to. Shared by the orchestrator and inter-agent delegation. */
-export function buildDelegateTool(specialists: Specialist[]): Anthropic.Tool {
+export function buildDelegateTool(specialists: Specialist[]): ToolContract {
   return {
     name: "delegate",
     description:

@@ -7,62 +7,24 @@
 // view access for any role, writes for owner/builder/architect only. Without
 // Clerk the platform runs in open demo mode (highest-privilege member acts as
 // the current user).
+//
+// The request-free core (registry → OrgCtx, email → member) lives in
+// lib/platform/principal (MCP plan W1b); this module adds the page-flavored
+// behavior on top: Clerk identity lookup and redirect-on-denied.
 
 import { redirect } from "next/navigation";
-import {
-  getOrgRegistry,
-  listControlTeam,
-  type ControlTeamMember,
-} from "@/lib/platform/controlPlane";
 import { clerkEnabled, platformAdminEmails } from "./authConfig";
 import { reportingCapabilities } from "./reportingPolicy";
+import { isAdminRole, isWriteRole } from "./module1Governance";
 import {
-  defaultModule1Governance,
-  isAdminRole,
-  isWriteRole,
-  rolePriority,
-} from "./module1Governance";
-// Composite-aware normalization ("builder+finance") — keeps sub-roles on the
-// viewer's role string so CLS/Approve checks (lib/platform/roles) can see them.
-import { normalizeRoleString as normalizeTeamRole } from "./roles";
-import {
-  AiAuthority,
-  DEFAULT_FEATURES,
-  EngagementType,
-  OrgConfig,
-  OrgCtx,
-} from "./types";
+  resolveDefaultMember,
+  resolveMember,
+  resolveOrgCtx,
+  type CurrentUser,
+} from "./principal";
+import { OrgCtx } from "./types";
 
-function parseJson<T>(raw: string, fallback: T): T {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function parseConfig(settingsRaw: string): OrgConfig {
-  const settings = parseJson<Partial<OrgConfig>>(settingsRaw, {});
-  return {
-    assistant: {
-      name: settings.assistant?.name ?? "Assistant",
-      persona:
-        settings.assistant?.persona ??
-        "You are the AI project coordinator for this organisation. Be precise, data-driven, and flag risks proactively.",
-    },
-    features: {
-      ...DEFAULT_FEATURES,
-      ...(settings.features ?? {}),
-    },
-    module1: settings.module1 ?? defaultModule1Governance(),
-    branding: settings.branding?.logo ? { logo: settings.branding.logo } : undefined,
-    generalJobId: typeof settings.generalJobId === "string" ? settings.generalJobId : undefined,
-    tenantDatabaseUrl:
-      typeof settings.tenantDatabaseUrl === "string" && settings.tenantDatabaseUrl
-        ? settings.tenantDatabaseUrl
-        : undefined,
-  };
-}
+export type { CurrentUser } from "./principal";
 
 /** Signed-in user's primary email via Clerk, or null in demo mode. */
 export async function getAuthEmail(): Promise<string | null> {
@@ -72,28 +34,8 @@ export async function getAuthEmail(): Promise<string | null> {
   return user?.primaryEmailAddress?.emailAddress?.toLowerCase() ?? null;
 }
 
-/** Find a team member by email in the control plane's team registry. */
-async function findMember(ctx: OrgCtx, email: string): Promise<ControlTeamMember | null> {
-  const members = await listControlTeam(ctx.orgSlug);
-  const member = members.find((m) => m.email.toLowerCase() === email) ?? null;
-  return member ? { ...member, role: normalizeTeamRole(member.role) } : null;
-}
-
 export async function getOrgCtx(orgSlug: string): Promise<OrgCtx | null> {
-  const e = await getOrgRegistry(orgSlug);
-  if (!e || !e.isActive) return null;
-  return {
-    orgId: e.orgId,
-    orgSlug: e.slug,
-    orgName: e.name,
-    vertical: e.vertical,
-    defaultEngagementType: e.defaultEngagementType as EngagementType,
-    allowedEngagementTypes: parseJson<EngagementType[]>(e.allowedEngagementTypes, [
-      e.defaultEngagementType as EngagementType,
-    ]),
-    aiAuthority: e.aiAuthority as AiAuthority,
-    config: parseConfig(e.settings),
-  };
+  return resolveOrgCtx(orgSlug);
 }
 
 /** Resolve the org or bounce to the org picker. First line of every platform
@@ -104,30 +46,21 @@ export async function requireOrgCtx(orgSlug: string): Promise<OrgCtx> {
 
   const email = await getAuthEmail();
   if (email !== null) {
-    const member = await findMember(ctx, email);
+    const member = await resolveMember(ctx, email);
     if (!member) redirect("/app?denied=1");
   }
   return ctx;
 }
 
-export interface CurrentUser {
-  name: string;
-  role: string;
-  email: string;
-}
-
 export async function getCurrentViewer(ctx: OrgCtx): Promise<CurrentUser> {
   const email = await getAuthEmail();
   if (email !== null) {
-    const member = await findMember(ctx, email);
+    const member = await resolveMember(ctx, email);
     if (!member) redirect("/app?denied=1");
-    return { name: member.name, role: normalizeTeamRole(member.role), email: member.email };
+    return member;
   }
-  const members = await listControlTeam(ctx.orgSlug);
-  const member = [...members].sort((a, b) => rolePriority(a.role) - rolePriority(b.role))[0];
-  return member
-    ? { name: member.name, role: normalizeTeamRole(member.role), email: member.email }
-    : { name: "Demo User", role: "owner", email: "" };
+  const member = await resolveDefaultMember(ctx);
+  return member ?? { name: "Demo User", role: "owner", email: "" };
 }
 
 /** Current user for actor stamping. Called on every mutation path, so with

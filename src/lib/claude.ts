@@ -4,6 +4,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { logger, errMeta } from "@/lib/logger";
+import type { ToolContract } from "@/lib/platform/toolContract";
 
 // Env-overridable so a model rollover is a config change, not a deploy.
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-opus-4-7"; // matches the Django client
@@ -180,7 +181,7 @@ export async function callClaudeVisionMulti(
 export async function callClaude(
   systemPrompt: string,
   userMessage: string,
-  opts: { tools?: Anthropic.Tool[]; maxTokens?: number; model?: string } = {},
+  opts: { tools?: readonly ToolContract[]; maxTokens?: number; model?: string } = {},
 ): Promise<ChatResult> {
   return callClaudeConversation(systemPrompt, [{ role: "user", content: userMessage }], opts);
 }
@@ -191,7 +192,9 @@ export async function callClaudeConversation(
   systemPrompt: string,
   messages: Anthropic.MessageParam[],
   opts: {
-    tools?: Anthropic.Tool[];
+    /** Transport-neutral contracts (lib/platform/toolContract) — adapted to
+     *  the SDK's Tool shape here, the only Anthropic conversion point. */
+    tools?: readonly ToolContract[];
     maxTokens?: number;
     model?: string;
     /** When supplied, the reply is streamed: `reset` then a `delta` per text
@@ -227,7 +230,12 @@ export async function callClaudeConversation(
       system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
       messages,
     };
-    if (tools?.length) params.tools = tools;
+    if (tools?.length)
+      params.tools = tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.input_schema as Anthropic.Tool["input_schema"],
+      }));
     if (onEvent) {
       onEvent({ type: "reset" });
       const stream = client.messages.stream(params);

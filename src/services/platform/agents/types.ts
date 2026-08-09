@@ -5,8 +5,8 @@
 // single hardcoded assistant with no behaviour change — the existing assistant
 // is now just the `project_intelligence` entry.
 
-import type Anthropic from "@anthropic-ai/sdk";
 import type { AiTask } from "@/lib/platform/modelRouter";
+import type { ToolContract } from "@/lib/platform/toolContract";
 import type { ToolPolicy } from "@/services/platform/assistant/tools";
 
 /** Registered agent keys. New module-agents extend this union. */
@@ -31,7 +31,7 @@ export interface AgentDefinition {
   /** Prompt template id resolved via src/lib/platform/prompts. */
   systemPromptId: string;
   /** Tools the model may call in this agent's loop. */
-  tools: Anthropic.Tool[];
+  tools: ToolContract[];
   /** Per-tool risk/table/op policy, keyed by tool name. */
   toolPolicy: Record<string, ToolPolicy>;
   /** modelRouter task used to resolve the concrete model id at call time. */

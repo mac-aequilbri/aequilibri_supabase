@@ -2,8 +2,12 @@
 // Architecture doc. Each write tool maps to a fixed recordWriter table (the
 // model never names tables) with a risk class that the org's aiAuthority
 // policy uses to decide execute-now vs propose-for-approval.
+//
+// Transport-neutral (MCP plan W1a): definitions are ToolContract, not SDK
+// types — lib/claude.ts adapts to Anthropic; the planned MCP server reads
+// the same registry.
 
-import type Anthropic from "@anthropic-ai/sdk";
+import type { ToolContract } from "@/lib/platform/toolContract";
 import type { WritableTable } from "@/lib/platform/recordWriter";
 import { normalizeTeamRole } from "@/lib/platform/module1Governance";
 import { financeVisible } from "@/lib/platform/roles";
@@ -123,7 +127,7 @@ const proposalReasonProp = {
   },
 };
 
-export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
+export const ASSISTANT_TOOLS: ToolContract[] = [
   {
     name: "query_records",
     description:
@@ -389,7 +393,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
 // ASSISTANT_TOOLS / TOOL_POLICY remain intact for the policy tests).
 
 /** An agent's tool subset, selected by tool name. */
-export function toolsByName(names: readonly string[]): Anthropic.Tool[] {
+export function toolsByName(names: readonly string[]): ToolContract[] {
   return ASSISTANT_TOOLS.filter((t) => names.includes(t.name));
 }
 
