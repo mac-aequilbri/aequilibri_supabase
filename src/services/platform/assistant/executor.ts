@@ -8,8 +8,18 @@ import { db, prisma } from "@/lib/db";
 import type { ToolUse } from "@/lib/claude";
 import { writeRecord, WritableTable, type RecordId } from "@/lib/platform/recordWriter";
 import { Actor, AiAuthority, OrgCtx } from "@/lib/platform/types";
-import { currentJobScope } from "@/lib/platform/rls";
+import { currentJobScope, resolveJobScope } from "@/lib/platform/rls";
 import { roleCanQueryTable, roleCanUseTool, type ToolPolicy } from "./tools";
+
+/** An explicitly-identified viewer for RLS scoping. The in-app chat path
+ *  omits it (the request's Clerk viewer is resolved via currentJobScope); the
+ *  MCP path MUST pass its session member — an MCP request has no Clerk
+ *  context, so falling back to the request viewer would resolve the wrong
+ *  identity (mcp-assistant-plan §1). */
+export interface ScopedViewer {
+  email: string;
+  role: string;
+}
 
 export interface ToolOutcome {
   toolName: string;
@@ -57,7 +67,11 @@ const QUERYABLE = {
     ({ model: db(ctx).platDocument, select: { id: true, jobId: true, title: true, docType: true, status: true, uploadedBy: true, version: true } }),
 } as const;
 
-async function runQuery(ctx: OrgCtx, input: Record<string, unknown>): Promise<string> {
+async function runQuery(
+  ctx: OrgCtx,
+  input: Record<string, unknown>,
+  viewer?: ScopedViewer,
+): Promise<string> {
   const table = String(input.table ?? "");
   const def = QUERYABLE[table as keyof typeof QUERYABLE];
   if (!def) return `Unknown table "${table}".`;
@@ -66,7 +80,7 @@ async function runQuery(ctx: OrgCtx, input: Record<string, unknown>): Promise<st
   const jobScoped = table !== "jobs" && table !== "vendors" && table !== "learning_rules";
   if (typeof input.jobId === "number" && jobScoped) where.jobId = input.jobId;
   // RLS: constrain to the viewer's assigned jobs. No-op for whole-tenant viewers.
-  const pgScope = await currentJobScope(ctx);
+  const pgScope = viewer ? await resolveJobScope(ctx, viewer) : await currentJobScope(ctx);
   if (pgScope.mode !== "all") {
     const ids = pgScope.mode === "some" ? [...pgScope.jobIds].map(Number).filter((n) => Number.isFinite(n)) : [-1];
     if (table === "jobs") where.id = { in: ids };
@@ -251,6 +265,7 @@ export async function executeToolUse(
   tu: ToolUse,
   toolPolicy: Record<string, ToolPolicy>,
   currentUserRole?: string,
+  viewer?: ScopedViewer,
 ): Promise<ToolOutcome> {
   const policy = toolPolicy[tu.name];
   if (!policy) {
@@ -287,7 +302,7 @@ export async function executeToolUse(
       };
     }
     try {
-      return { toolName: tu.name, ok: true, summary: await runQuery(ctx, input) };
+      return { toolName: tu.name, ok: true, summary: await runQuery(ctx, input, viewer) };
     } catch (err) {
       return { toolName: tu.name, ok: false, summary: `Query failed: ${err}` };
     }

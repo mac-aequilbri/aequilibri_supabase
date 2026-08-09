@@ -139,6 +139,16 @@ authenticated (org, user) session context must be impossible to execute — and
   `query_records` + service reads only, org API-key auth, one pilot org.
   Exit: an external MCP client lists tools and reads that org's jobs — and a
   key for org A provably cannot read org B (test both directions).
+  **DONE 2026-08-09:** `POST /api/mcp/[org]` (stateless Streamable HTTP,
+  dependency-free JSON-RPC dispatch in `services/platform/mcp/server.ts`);
+  session auth in `services/platform/mcp/session.ts` (org from URL, SHA-256
+  key hash in registry settings via `scripts/mcp-issue-key.mjs`, active
+  `mcp:in` connection row as the per-org kill switch, key bound to a member
+  whose role/RLS scope apply — executor gained an explicit-viewer param so
+  MCP never falls back to the Clerk request viewer). `onboarding_status`
+  deliberately excluded (Clerk-coupled admin check). 16 tenancy tests
+  (`mcp/mcp.test.ts`) cover §5's read-only rows; verified live against the
+  dev server on the dulong-downs-didi pilot org incl. cross-org 401s.
 - **W3 — Writes + approval gate:** enable write tools through the executor;
   verify a high-risk write from an external client lands as a
   `PlatPendingWrite` proposal and appears in the app's approval queue with

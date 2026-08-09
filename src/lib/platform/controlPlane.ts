@@ -319,6 +319,48 @@ export async function setOrgWebhookSecret(slug: string, secret: string): Promise
   });
 }
 
+// ── MCP API keys (mcp-assistant-plan W2) ─────────────────────────────────────
+// Per-org keys for the /api/mcp/[org] endpoint, stored like webhookSecret in
+// the registry settings JSON. Only the SHA-256 hash is stored — the plaintext
+// key is shown once by scripts/mcp-issue-key.mjs. Each key is bound to an org
+// member (memberEmail): the session acts AS that member, so role gates and
+// RLS job scoping apply to every MCP call. Enablement (the per-org kill
+// switch) is the active `mcp:in` connection row, mirroring the hooks route.
+
+export interface McpKeyEntry {
+  /** SHA-256 hex of the plaintext key. */
+  keyHash: string;
+  /** The org member this key acts as (role + RLS scope come from them). */
+  memberEmail: string;
+  label: string;
+  createdAt: string;
+}
+
+export async function getOrgMcpKeys(slug: string): Promise<McpKeyEntry[]> {
+  const entry = await getOrgRegistry(slug);
+  if (!entry) return [];
+  try {
+    const parsed = JSON.parse(entry.settings || "{}") as { mcpKeys?: unknown };
+    if (!Array.isArray(parsed.mcpKeys)) return [];
+    return parsed.mcpKeys.filter(
+      (k): k is McpKeyEntry =>
+        !!k &&
+        typeof k === "object" &&
+        typeof (k as McpKeyEntry).keyHash === "string" &&
+        typeof (k as McpKeyEntry).memberEmail === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function addOrgMcpKey(slug: string, key: McpKeyEntry): Promise<void> {
+  await mergeSettings(slug, (s) => {
+    const existing = Array.isArray(s.mcpKeys) ? s.mcpKeys : [];
+    s.mcpKeys = [...existing, key];
+  });
+}
+
 export async function setOrgAiAuthority(slug: string, aiAuthority: string): Promise<boolean> {
   const org = await prisma.platOrganisation.findFirst({ where: { slug } });
   if (!org) return false;
