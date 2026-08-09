@@ -223,6 +223,10 @@ export async function sendChatMessage(
     sessionId?: RecordId;
     jobId?: RecordId;
     userRole?: string;
+    /** The viewer's email — identifies the member for the agents' MCP
+     *  sessions (plan W5: role gates + RLS run on this identity, resolved at
+     *  the request edge, never inside the loop). */
+    userEmail?: string;
     onEvent?: (e: ChatStreamEvent) => void;
   } = {},
 ): Promise<SendResult> {
@@ -300,6 +304,13 @@ export async function sendChatMessage(
     orgName: ctx.orgName,
     userRole: opts.userRole,
     onEvent: opts.onEvent,
+    // The agents' MCP sessions act as this viewer (plan W5).
+    viewer: {
+      name: userName,
+      email: opts.userEmail ?? "",
+      role: opts.userRole ?? "",
+      platformAdmin,
+    },
   });
   // Per-stage latency (ms): reads = pre-model data fetch; model = full
   // orchestrator fan-out; total = whole turn. Written to EXECUTION_LOG so the

@@ -11,14 +11,17 @@ import { Actor, AiAuthority, OrgCtx } from "@/lib/platform/types";
 import { currentJobScope, resolveJobScope } from "@/lib/platform/rls";
 import { roleCanQueryTable, roleCanUseTool, type ToolPolicy } from "./tools";
 
-/** An explicitly-identified viewer for RLS scoping. The in-app chat path
- *  omits it (the request's Clerk viewer is resolved via currentJobScope); the
- *  MCP path MUST pass its session member — an MCP request has no Clerk
- *  context, so falling back to the request viewer would resolve the wrong
- *  identity (mcp-assistant-plan §1). */
+/** An explicitly-identified viewer for RLS scoping and operator gating. When
+ *  omitted, the request's Clerk viewer is resolved via currentJobScope /
+ *  isPlatformAdmin; the MCP path MUST pass its session member — an MCP
+ *  request has no Clerk context, so falling back to the request viewer would
+ *  resolve the wrong identity (mcp-assistant-plan §1). */
 export interface ScopedViewer {
   email: string;
   role: string;
+  /** Platform-operator flag; substitutes for the Clerk-coupled
+   *  isPlatformAdmin() check when a viewer is supplied. */
+  platformAdmin?: boolean;
 }
 
 export interface ToolOutcome {
@@ -162,6 +165,7 @@ async function runServiceTool(
   actor: Actor,
   name: string,
   input: Record<string, unknown>,
+  viewer?: ScopedViewer,
 ): Promise<ToolOutcome> {
   try {
     switch (name) {
@@ -229,8 +233,12 @@ async function runServiceTool(
         // Provisioning new orgs stays in the /app/new form (cross-org, creates
         // external Airtable resources). The chat onboarding tool is read-only
         // and platform-admin gated: it reports the current org's readiness.
-        const { isPlatformAdmin } = await import("@/lib/platform/org-context");
-        if (!(await isPlatformAdmin())) {
+        // An explicit viewer (MCP path) carries the flag; only the viewerless
+        // in-app path may consult the Clerk request context.
+        const admin = viewer
+          ? viewer.platformAdmin === true
+          : await (await import("@/lib/platform/org-context")).isPlatformAdmin();
+        if (!admin) {
           return { toolName: name, ok: false, summary: "Onboarding tools require a platform administrator." };
         }
         const cfg = ctx.config;
@@ -284,7 +292,7 @@ export async function executeToolUse(
   // than recordWriter. Checked before the read branch because a service tool
   // may be read-risk (e.g. route suggestions) yet must not hit runQuery.
   if (policy.kind === "service") {
-    return runServiceTool(ctx, actor, tu.name, input);
+    return runServiceTool(ctx, actor, tu.name, input, viewer);
   }
 
   if (policy.risk === "read") {

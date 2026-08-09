@@ -167,6 +167,19 @@ authenticated (org, user) session context must be impossible to execute — and
 - **W5 — (Optional, later) internal dogfood:** route the in-app assistant's
   tool execution through the MCP client in staging to confirm parity; adopt
   only if the added hop earns its keep (it may never need to).
+  **DONE 2026-08-09 (adopted):** the agent loop now executes ALL tool calls
+  through an in-process MCP client (`mcp/client.ts` → `handleMcpMessage`) —
+  the same server core external consumers hit, with no loopback network hop.
+  Parity is carried by three session fields: `tools` pins the agent's bundle,
+  `actor` keeps chat write provenance (assistant name + sourceMessageId),
+  `platformAdmin` replaces the executor's Clerk-coupled admin check (so
+  onboarding_status joined the MCP surface, operator-gated). ToolOutcome
+  rides back in the MCP result's structuredContent so approval cards keep
+  proposalId/recordId. The chat viewer (email/role) is resolved at the
+  request edge and threaded down — the loop never touches request context.
+  4 parity tests; live-verified: a real chat turn on dulong-downs-didi ran
+  orchestrator → specialist → MCP client → executor → the org's own tenant
+  DB, with the delegated+query_records trace persisted. 319/319 green.
 - **W6 — Ops:** deploy inside the AWS plan's VPC (ap-southeast-2), per-org
   rate limits, usage logging per session org, kill-switch per org
   (registry flag), offboarding = revoke keys + org's MCP access with its DB.

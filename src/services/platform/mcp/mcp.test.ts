@@ -6,6 +6,8 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma, prismaUnscoped } from "@/lib/db";
+import { projectIntelligenceAgent } from "@/services/platform/agents/projectIntelligence";
+import { executeToolViaMcp } from "./client";
 import { hashMcpKey, resolveMcpSession, type McpSession } from "./session";
 import { handleMcpMessage } from "./server";
 
@@ -225,10 +227,12 @@ describe("MCP protocol surface", () => {
     expect(names).not.toContain("onboarding_status");
   });
 
-  it("tools outside the MCP surface are not callable — not merely hidden", async () => {
+  it("tools outside the session's reach are not callable — not merely hidden", async () => {
     const session = await sessionFor(SLUG_A, KEY_A_OWNER);
-    const res = await call(session, "onboarding_status", {});
-    expect(res.error?.code).toBe(-32602);
+    // Not on the surface at all.
+    expect((await call(session, "drop_all_tables", {})).error?.code).toBe(-32602);
+    // On the surface but operator-gated: API-key sessions are never admins.
+    expect((await call(session, "onboarding_status", {})).error?.code).toBe(-32602);
   });
 
   it("acknowledges notifications with 202 and no body", async () => {
@@ -375,5 +379,78 @@ describe("W3: writes through the approval gate", () => {
       where: { id: bActionId, orgId: orgBId },
     });
     expect(untouched!.status).not.toBe("done");
+  });
+});
+
+describe("W5: the in-app assistant's in-process MCP client", () => {
+  /** An in-app-style session, as the agent loop builds it: the chat viewer's
+   *  identity, the agent's tool bundle, and the chat actor for provenance. */
+  async function inAppSession(overrides: Partial<McpSession> = {}): Promise<McpSession> {
+    const base = await sessionFor(SLUG_A, KEY_A_OWNER);
+    return {
+      ctx: base.ctx,
+      user: { name: "Owner A", email: "owner@a.test", role: "owner" },
+      platformAdmin: false,
+      tools: Object.keys(projectIntelligenceAgent.toolPolicy),
+      actor: { type: "ai", name: "Test Assistant", sourceMessageId: 42 },
+      ...overrides,
+    };
+  }
+
+  it("outcome parity: structured fields and chat write provenance survive the protocol", async () => {
+    const session = await inAppSession();
+    const outcome = await executeToolViaMcp(session, {
+      name: "create_action",
+      input: { title: "W5 parity action" },
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.status).toBe("executed"); // structuredContent round-trip
+    expect(outcome.recordId).toBeDefined();
+
+    const row = await prisma.platActionHub.findFirst({
+      where: { orgId: orgAId, title: "W5 parity action" },
+    });
+    // Chat provenance is untouched by the MCP routing: sourceId is the chat
+    // message id from the actor, and the audit log carries the chat actor's
+    // name, not the external mcp:<email> form.
+    expect(row!.sourceId).toBe(42);
+    const log = await prisma.platExecutionLog.findFirst({
+      where: { orgId: orgAId, actorName: "Test Assistant", status: "executed" },
+    });
+    expect(log).not.toBeNull();
+  });
+
+  it("proposals surface their proposalId (the approval cards' input)", async () => {
+    const session = await inAppSession({
+      tools: ["propose_rule"], // learning-loop agent's territory
+    });
+    const outcome = await executeToolViaMcp(session, {
+      name: "propose_rule",
+      input: { description: "W5 parity rule" },
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.status).toBe("proposed");
+    expect(outcome.proposalId).toBeDefined();
+  });
+
+  it("the session's tool subset pins the agent bundle: outside tools are unknown", async () => {
+    const session = await inAppSession(); // project_intelligence bundle
+    const outcome = await executeToolViaMcp(session, {
+      name: "propose_rule", // learning-loop tool, not in this bundle
+      input: { description: "should not exist" },
+    });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.summary).toMatch(/unknown tool/i);
+  });
+
+  it("onboarding_status works for a platform-admin session and only then", async () => {
+    const admin = await inAppSession({ platformAdmin: true, tools: ["onboarding_status"] });
+    const ok = await executeToolViaMcp(admin, { name: "onboarding_status", input: {} });
+    expect(ok.ok).toBe(true);
+    expect(ok.summary).toMatch(/readiness/i);
+
+    const notAdmin = await inAppSession({ platformAdmin: false, tools: ["onboarding_status"] });
+    const denied = await executeToolViaMcp(notAdmin, { name: "onboarding_status", input: {} });
+    expect(denied.ok).toBe(false);
   });
 });

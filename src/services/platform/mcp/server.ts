@@ -22,9 +22,9 @@ import type { McpSession } from "./session";
 
 // The MCP tool surface (W2 reads + W3 writes): an explicit allow-list, not
 // "everything in TOOL_POLICY", so a future tool never appears here silently.
-// onboarding_status is deliberately excluded — it is a platform-operator tool
-// whose admin check is coupled to the Clerk request context, which an MCP
-// request does not have.
+// onboarding_status is a platform-operator tool: only sessions with
+// platformAdmin (the in-app client under an operator, plan W5) list or pass
+// it — API-key sessions are never platform admins.
 export const MCP_TOOL_NAMES = [
   // reads
   "query_records",
@@ -43,9 +43,20 @@ export const MCP_TOOL_NAMES = [
   // service drafts — human-reviewed downstream lifecycle
   "generate_weekly_report",
   "run_construction_intake",
+  // platform-operator only (session.platformAdmin)
+  "onboarding_status",
 ] as const;
 const MCP_TOOLS = toolsByName(MCP_TOOL_NAMES);
 const MCP_POLICY = policyByName(MCP_TOOL_NAMES);
+
+/** Is a tool callable in THIS session — on the surface, inside the session's
+ *  tool subset (agent bundle), and operator-gated where required. */
+function sessionAllows(session: McpSession, name: string): boolean {
+  if (!MCP_POLICY[name]) return false;
+  if (session.tools && !session.tools.includes(name)) return false;
+  if (name === "onboarding_status" && session.platformAdmin !== true) return false;
+  return true;
+}
 
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const LATEST_PROTOCOL_VERSION = "2025-06-18";
@@ -75,31 +86,32 @@ function rpcError(id: JsonRpcId, code: number, message: string, status = 200): M
 }
 
 /** The session's tool listing — MCP wire shape (inputSchema, not
- *  input_schema), filtered to the tools the session member's role may use
- *  (plan §3.1: a broker doesn't even see write tools their role can't call).
- *  Defense in depth only — the executor re-checks the role on every call. */
+ *  input_schema), filtered to the session's subset and the tools the member's
+ *  role may use (plan §3.1: a broker doesn't even see write tools their role
+ *  can't call). Defense in depth only — every call is re-checked. */
 function listTools(session: McpSession) {
-  return MCP_TOOLS.filter((t) => roleCanUseTool(session.user.role, t.name, MCP_POLICY)).map(
-    (t) => ({
-      name: t.name,
-      description: t.description ?? "",
-      inputSchema: t.input_schema,
-    }),
-  );
+  return MCP_TOOLS.filter(
+    (t) => sessionAllows(session, t.name) && roleCanUseTool(session.user.role, t.name, MCP_POLICY),
+  ).map((t) => ({
+    name: t.name,
+    description: t.description ?? "",
+    inputSchema: t.input_schema,
+  }));
 }
 
 async function callTool(session: McpSession, id: JsonRpcId, params: unknown): Promise<McpHttpResult> {
   const p = (params ?? {}) as { name?: unknown; arguments?: unknown };
   const name = String(p.name ?? "");
-  if (!MCP_POLICY[name]) {
+  if (!sessionAllows(session, name)) {
     return rpcError(id, -32602, `Unknown tool "${name}"`);
   }
   const args =
     p.arguments && typeof p.arguments === "object" ? (p.arguments as Record<string, unknown>) : {};
 
-  // Attribution: the actor is the machine consumer acting AS the key's bound
-  // member; role + viewer keep gating and RLS on that member's identity.
-  const actor: Actor = {
+  // Attribution: external sessions act as the machine consumer for the key's
+  // bound member; the in-app client overrides with the chat actor so write
+  // provenance (assistant name, sourceMessageId) survives the MCP routing.
+  const actor: Actor = session.actor ?? {
     type: "ai",
     name: `mcp:${session.user.email}`,
     role: session.user.role,
@@ -110,19 +122,36 @@ async function callTool(session: McpSession, id: JsonRpcId, params: unknown): Pr
     { name, input: args, id: typeof id === "string" ? id : undefined },
     MCP_POLICY,
     session.user.role,
-    { email: session.user.email, role: session.user.role },
+    {
+      email: session.user.email,
+      role: session.user.role,
+      platformAdmin: session.platformAdmin === true,
+    },
   );
-  void touchConnectionHealth(
-    session.ctx.orgSlug,
-    "mcp",
-    "in",
-    `${name}: ${outcome.ok ? "ok" : "error"}`,
-  ).catch(() => {});
+  if (!session.actor) {
+    // Health telemetry is for external consumers; the in-app path has its own
+    // EXECUTION_LOG chat entries.
+    void touchConnectionHealth(
+      session.ctx.orgSlug,
+      "mcp",
+      "in",
+      `${name}: ${outcome.ok ? "ok" : "error"}`,
+    ).catch(() => {});
+  }
 
-  // Per MCP: tool-level failures are results with isError, not protocol errors.
+  // Per MCP: tool-level failures are results with isError, not protocol
+  // errors. structuredContent mirrors the executor's ToolOutcome so clients
+  // (and the in-app MCP client, plan W5) keep proposalId/recordId/status.
   return rpcResult(id, {
     content: [{ type: "text", text: outcome.summary }],
     isError: !outcome.ok,
+    structuredContent: {
+      toolName: outcome.toolName,
+      ok: outcome.ok,
+      ...(outcome.status ? { status: outcome.status } : {}),
+      ...(outcome.proposalId != null ? { proposalId: outcome.proposalId } : {}),
+      ...(outcome.recordId != null ? { recordId: outcome.recordId } : {}),
+    },
   });
 }
 

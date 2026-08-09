@@ -19,7 +19,7 @@ import { getPrompt } from "@/lib/platform/prompts";
 import { Actor, OrgCtx } from "@/lib/platform/types";
 import type { ToolOutcome } from "@/services/platform/assistant/executor";
 import { MAX_AGENT_DELEGATION_DEPTH, buildDelegateTool, runAgentLoop } from "./loop";
-import type { DelegationContext, Specialist } from "./types";
+import type { AgentViewer, DelegationContext, Specialist } from "./types";
 
 export type { Specialist } from "./types";
 export { buildDelegateTool } from "./loop";
@@ -47,13 +47,14 @@ async function delegateToSpecialist(
   userRole: string | undefined,
   delegation: DelegationContext,
   onEvent?: (e: ChatStreamEvent) => void,
+  viewer?: AgentViewer,
 ): Promise<{ reply: string; outcomes: ToolOutcome[] }> {
   // The specialist answers the real conversation (full context); the routing
   // task is added as a hint so it knows why it was picked.
   const system = task
     ? `${target.system}\n\nThe coordinator routed this request to you: ${task}`
     : target.system;
-  const sub = await runAgentLoop(target.agent, ctx, system, [...convo], actor, userRole, delegation, onEvent);
+  const sub = await runAgentLoop(target.agent, ctx, system, [...convo], actor, userRole, delegation, onEvent, viewer);
   return { reply: sub.reply || "(the specialist returned no reply)", outcomes: sub.outcomes };
 }
 
@@ -66,15 +67,17 @@ export async function runOrchestrator(
     orgName: string;
     userRole?: string;
     onEvent?: (e: ChatStreamEvent) => void;
+    /** The chat viewer's identity for the agents' MCP sessions (plan W5). */
+    viewer?: AgentViewer;
   },
 ): Promise<OrchestratorResult> {
-  const { specialists, orgName, userRole, onEvent } = opts;
+  const { specialists, orgName, userRole, onEvent, viewer } = opts;
 
   // No routing choice to make — run the one specialist directly.
   if (specialists.length <= 1) {
     const only = specialists[0];
     if (!only) return { reply: "No assistant is configured.", demoMode: false, outcomes: [], delegations: [] };
-    const r = await runAgentLoop(only.agent, ctx, only.system, convo, actor, userRole, undefined, onEvent);
+    const r = await runAgentLoop(only.agent, ctx, only.system, convo, actor, userRole, undefined, onEvent, viewer);
     return { reply: r.reply, demoMode: r.demoMode, outcomes: r.outcomes, delegations: [] };
   }
 
@@ -127,7 +130,7 @@ export async function runOrchestrator(
         });
         continue;
       }
-      const sub = await delegateToSpecialist(target, ctx, convo, actor, String(input.task ?? ""), userRole, delegation, onEvent);
+      const sub = await delegateToSpecialist(target, ctx, convo, actor, String(input.task ?? ""), userRole, delegation, onEvent, viewer);
       outcomes.push(...sub.outcomes);
       delegations.push({ agent: target.agent.key, label: target.agent.label });
       lastSpecialistReply = sub.reply;

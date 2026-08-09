@@ -61,6 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ org
           sessionId,
           jobId,
           userRole: user.role,
+          userEmail: user.email,
           onEvent: (e) => send(e.type === "reset" ? { t: "reset" } : { t: "delta", v: e.text }),
         });
         send({ t: "done" });

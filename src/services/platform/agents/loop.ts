@@ -1,8 +1,9 @@
 // Generic agent tool-use loop — extracted from the assistant's sendChatMessage.
 // Runs any AgentDefinition: calls the model with the agent's tools, executes
-// each tool_use through the shared executor (which enforces the org's
-// aiAuthority + role policy), feeds tool_result blocks back, and repeats until
-// the model stops calling tools or MAX_TOOL_ROUNDS is hit.
+// each tool_use through the in-process MCP client (mcp-assistant-plan W5) —
+// the same server core external MCP consumers hit, which shims into the
+// shared executor (org aiAuthority + role policy) — feeds tool_result blocks
+// back, and repeats until the model stops calling tools or MAX_TOOL_ROUNDS.
 //
 // Inter-agent delegation: when a DelegationContext is supplied and the depth cap
 // isn't reached, the agent is also given a `delegate` tool; handling it recurses
@@ -14,8 +15,10 @@ import { callClaudeConversation, type ChatStreamEvent } from "@/lib/claude";
 import type { ToolContract } from "@/lib/platform/toolContract";
 import { modelFor } from "@/lib/platform/modelRouter";
 import { Actor, OrgCtx } from "@/lib/platform/types";
-import { executeToolUse, ToolOutcome } from "@/services/platform/assistant/executor";
-import type { AgentDefinition, DelegationContext, Specialist } from "./types";
+import type { ToolOutcome } from "@/services/platform/assistant/executor";
+import { executeToolViaMcp } from "@/services/platform/mcp/client";
+import type { McpSession } from "@/services/platform/mcp/session";
+import type { AgentDefinition, AgentViewer, DelegationContext, Specialist } from "./types";
 
 export const MAX_TOOL_ROUNDS = 4;
 /** The orchestrator delegates at depth 1; a specialist may delegate once more
@@ -66,6 +69,7 @@ export async function runAgentLoop(
   userRole?: string,
   delegation?: DelegationContext,
   onEvent?: (e: ChatStreamEvent) => void,
+  viewer?: AgentViewer,
 ): Promise<AgentLoopResult> {
   const outcomes: ToolOutcome[] = [];
   let reply = "";
@@ -73,6 +77,19 @@ export async function runAgentLoop(
 
   const targets = delegationTargets(agent.key, delegation);
   const tools = targets.length ? [...agent.tools, buildDelegateTool(targets)] : agent.tools;
+
+  // The agent's MCP session (plan W5): the chat viewer's identity for role
+  // gates + RLS, pinned to this agent's tool bundle, with the chat actor for
+  // write provenance. Without a viewer (offline tests / demo turns) the
+  // session still gates on userRole; RLS then resolves fail-open exactly as
+  // the pre-W5 demo path did.
+  const session: McpSession = {
+    ctx,
+    user: viewer ?? { name: actor.name, email: "", role: userRole ?? "" },
+    platformAdmin: viewer?.platformAdmin === true,
+    tools: Object.keys(agent.toolPolicy),
+    actor,
+  };
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const res = await callClaudeConversation(system, convo, {
@@ -122,6 +139,7 @@ export async function runAgentLoop(
           userRole,
           { ...delegation, depth: delegation.depth + 1 },
           onEvent,
+          viewer,
         );
         outcomes.push(...sub.outcomes);
         resultBlocks.push({
@@ -133,7 +151,7 @@ export async function runAgentLoop(
         continue;
       }
 
-      const outcome = await executeToolUse(ctx, actor, tu, agent.toolPolicy, userRole);
+      const outcome = await executeToolViaMcp(session, tu);
       outcomes.push(outcome);
       resultBlocks.push({
         type: "tool_result",

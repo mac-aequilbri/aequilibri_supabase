@@ -44,6 +44,17 @@ export interface Specialist {
   system: string;
 }
 
+/** The chat viewer an agent loop acts for (plan W5): identity for the MCP
+ *  session — role gates + RLS scope on their membership, platformAdmin for
+ *  operator tools. Resolved at the request edge (org-context) and threaded
+ *  down; the loop never consults the request context itself. */
+export interface AgentViewer {
+  name: string;
+  email: string;
+  role: string;
+  platformAdmin?: boolean;
+}
+
 /** Passed down a runAgentLoop chain so a specialist can delegate to another.
  *  `depth` increments each hop; delegation stops once it reaches `maxDepth`,
  *  which bounds inter-agent recursion. */

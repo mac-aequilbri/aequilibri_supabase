@@ -24,7 +24,7 @@ export async function sendMessageAction(formData: FormData): Promise<void> {
   if (!text) return;
   const user = await getCurrentViewer(ctx);
   const sessionId = recordIdParam(formData.get("sessionId")) ?? undefined;
-  await sendChatMessage(ctx, user.name, text, { sessionId, userRole: user.role });
+  await sendChatMessage(ctx, user.name, text, { sessionId, userRole: user.role, userEmail: user.email });
   revalidatePath(orgPath(ctx.orgSlug, "/assistant"));
 }
 

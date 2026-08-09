@@ -17,11 +17,23 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { getActiveConnection, getOrgMcpKeys } from "@/lib/platform/controlPlane";
 import { resolveMember, resolveOrgCtx, type CurrentUser } from "@/lib/platform/principal";
-import type { OrgCtx } from "@/lib/platform/types";
+import type { Actor, OrgCtx } from "@/lib/platform/types";
 
 export interface McpSession {
   ctx: OrgCtx;
   user: CurrentUser;
+  /** Platform-operator sessions may use operator tools (onboarding_status).
+   *  ALWAYS false for API-key sessions; the in-process client (plan W5) sets
+   *  it from isPlatformAdmin() where a real request context exists. */
+  platformAdmin?: boolean;
+  /** Restricts the session to a tool subset (the in-app agent bundles). No
+   *  value = the full MCP surface, as for external API-key sessions. */
+  tools?: readonly string[];
+  /** Actor override for audit attribution. External sessions default to
+   *  `mcp:<member email>`; the in-app client passes the chat actor so write
+   *  provenance (assistant name, sourceMessageId) is unchanged by the MCP
+   *  routing. */
+  actor?: Actor;
 }
 
 export type McpSessionResult =
@@ -67,5 +79,8 @@ export async function resolveMcpSession(
     };
   }
 
-  return { ok: true, session: { ctx, user } };
+  // API-key sessions are never platform operators and get the full public
+  // surface (no tool subset); the in-process client (plan W5) is the only
+  // constructor of narrower sessions.
+  return { ok: true, session: { ctx, user, platformAdmin: false } };
 }
