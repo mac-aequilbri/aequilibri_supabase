@@ -3,11 +3,12 @@
 // session state, so the single-instance constraint is untouched and every
 // message re-verifies against the control plane.
 //
-// W2 exposes the READ-ONLY tool subset. Every handler is a thin shim into
-// executeToolUse — the same executor the in-app assistant uses — so role
-// gates, per-table read denies and RLS job scoping apply identically; the
-// protocol boundary adds zero new authority (plan §3.1). Write tools arrive
-// in W3 behind the same executor's aiAuthority approval gate.
+// Every handler is a thin shim into executeToolUse — the same executor the
+// in-app assistant uses — so role gates, per-table read denies, RLS job
+// scoping and the org's aiAuthority approval policy apply identically; the
+// protocol boundary adds zero new authority (plan §3.1). A write an MCP
+// client proposes lands as a PlatPendingWrite in the app's approval queue
+// exactly like a chat-proposed one; nothing on this path can bypass it.
 //
 // Implemented directly (no SDK): the stateless subset is a small JSON-RPC 2.0
 // dispatch (initialize / initialized / ping / tools list+call), and keeping
@@ -16,13 +17,33 @@
 import { touchConnectionHealth } from "@/lib/platform/controlPlane";
 import type { Actor } from "@/lib/platform/types";
 import { executeToolUse } from "@/services/platform/assistant/executor";
-import { policyByName, toolsByName } from "@/services/platform/assistant/tools";
+import { policyByName, roleCanUseTool, toolsByName } from "@/services/platform/assistant/tools";
 import type { McpSession } from "./session";
 
-// W2 tool surface: read-risk tools only. onboarding_status is deliberately
-// excluded — it is a platform-operator tool whose admin check is coupled to
-// the Clerk request context, which an MCP request does not have.
-export const MCP_TOOL_NAMES = ["query_records", "suggest_ingestion_routes"] as const;
+// The MCP tool surface (W2 reads + W3 writes): an explicit allow-list, not
+// "everything in TOOL_POLICY", so a future tool never appears here silently.
+// onboarding_status is deliberately excluded — it is a platform-operator tool
+// whose admin check is coupled to the Clerk request context, which an MCP
+// request does not have.
+export const MCP_TOOL_NAMES = [
+  // reads
+  "query_records",
+  "suggest_ingestion_routes",
+  // record writes — routed through recordWriter under aiAuthority
+  "capture_source_note",
+  "create_action",
+  "update_action",
+  "save_decision",
+  "propose_rule",
+  "update_budget_line",
+  "create_variation_draft",
+  "create_risk",
+  "draft_comm",
+  "log_workstream_update",
+  // service drafts — human-reviewed downstream lifecycle
+  "generate_weekly_report",
+  "run_construction_intake",
+] as const;
 const MCP_TOOLS = toolsByName(MCP_TOOL_NAMES);
 const MCP_POLICY = policyByName(MCP_TOOL_NAMES);
 
@@ -54,14 +75,17 @@ function rpcError(id: JsonRpcId, code: number, message: string, status = 200): M
 }
 
 /** The session's tool listing — MCP wire shape (inputSchema, not
- *  input_schema). W2's tools are read-risk so every role sees them; the
- *  executor still re-checks role + per-table denies on each call. */
-function listTools() {
-  return MCP_TOOLS.map((t) => ({
-    name: t.name,
-    description: t.description ?? "",
-    inputSchema: t.input_schema,
-  }));
+ *  input_schema), filtered to the tools the session member's role may use
+ *  (plan §3.1: a broker doesn't even see write tools their role can't call).
+ *  Defense in depth only — the executor re-checks the role on every call. */
+function listTools(session: McpSession) {
+  return MCP_TOOLS.filter((t) => roleCanUseTool(session.user.role, t.name, MCP_POLICY)).map(
+    (t) => ({
+      name: t.name,
+      description: t.description ?? "",
+      inputSchema: t.input_schema,
+    }),
+  );
 }
 
 async function callTool(session: McpSession, id: JsonRpcId, params: unknown): Promise<McpHttpResult> {
@@ -139,15 +163,18 @@ export async function handleMcpMessage(
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
         instructions:
-          `Read-only access to the ${session.ctx.orgName} workspace, acting as ` +
-          `${session.user.email} (role: ${session.user.role}). Data visibility follows ` +
-          `that member's permissions; writes are not available on this endpoint.`,
+          `Access to the ${session.ctx.orgName} workspace, acting as ` +
+          `${session.user.email} (role: ${session.user.role}). Data visibility and write ` +
+          `access follow that member's permissions. Writes are governed by the ` +
+          `organisation's AI-authority policy: they may be executed immediately or ` +
+          `recorded as proposals that a human must approve in the app before they apply — ` +
+          `the tool result says which happened.`,
       });
     }
     case "ping":
       return rpcResult(id, {});
     case "tools/list":
-      return rpcResult(id, { tools: listTools() });
+      return rpcResult(id, { tools: listTools(session) });
     case "tools/call":
       return callTool(session, id, msg.params);
     default:

@@ -46,6 +46,7 @@ async function call(session: McpSession, name: string, args: Record<string, unkn
 let orgAId = 0;
 let orgBId = 0;
 let jobA1 = 0;
+let bActionId = 0;
 
 beforeAll(async () => {
   await cleanup();
@@ -53,6 +54,10 @@ beforeAll(async () => {
     data: {
       slug: SLUG_A,
       name: "MCP Org A",
+      // auto_low_risk so the suite exercises BOTH authority branches: low-risk
+      // writes execute immediately here; high-risk always proposes. Org B
+      // keeps the approve_required default (everything proposes).
+      aiAuthority: "auto_low_risk",
       settings: JSON.stringify({
         mcpKeys: [
           keyEntry(KEY_A_OWNER, "owner@a.test"),
@@ -96,6 +101,12 @@ beforeAll(async () => {
   await prisma.platJob.create({ data: { orgId: orgBId, code: "B1", name: "Bravo Tower" } });
   jobA1 = a1.id;
 
+  // Org B action for the cross-org write-refusal proof.
+  const bAction = await prisma.platActionHub.create({
+    data: { orgId: orgBId, title: "B's private action" },
+  });
+  bActionId = bAction.id;
+
   // RLS: the builder is assigned to job A1 only.
   await prisma.platCtlAssignment.create({
     data: { orgSlug: SLUG_A, email: "builder@a.test", jobRecId: String(jobA1) },
@@ -108,7 +119,15 @@ async function cleanup() {
   const slugs = [SLUG_A, SLUG_B];
   const orgs = await prismaUnscoped.platOrganisation.findMany({ where: { slug: { in: slugs } } });
   const ids = orgs.map((o) => o.id);
-  if (ids.length) await prismaUnscoped.platJob.deleteMany({ where: { orgId: { in: ids } } });
+  if (ids.length) {
+    // Tenant rows don't cascade from the control-plane org delete — sweep
+    // everything the suite (or the writes it exercises) can have created.
+    await prismaUnscoped.platPendingWrite.deleteMany({ where: { orgId: { in: ids } } });
+    await prismaUnscoped.platExecutionLog.deleteMany({ where: { orgId: { in: ids } } });
+    await prismaUnscoped.platActionHub.deleteMany({ where: { orgId: { in: ids } } });
+    await prismaUnscoped.platLearningRule.deleteMany({ where: { orgId: { in: ids } } });
+    await prismaUnscoped.platJob.deleteMany({ where: { orgId: { in: ids } } });
+  }
   await prisma.platCtlAssignment.deleteMany({ where: { orgSlug: { in: slugs } } });
   await prisma.platCtlConnection.deleteMany({ where: { orgSlug: { in: slugs } } });
   await prisma.platCtlTeamMember.deleteMany({ where: { orgSlug: { in: slugs } } });
@@ -194,19 +213,22 @@ describe("MCP protocol surface", () => {
     expect((unknown.body as { result: { protocolVersion: string } }).result.protocolVersion).toBe("2025-06-18");
   });
 
-  it("lists exactly the read-only tool surface", async () => {
+  it("lists the full surface for an owner, never onboarding_status", async () => {
     const session = await sessionFor(SLUG_A, KEY_A_OWNER);
     const res = await handleMcpMessage(session, { jsonrpc: "2.0", id: 1, method: "tools/list" });
-    const tools = (res.body as { result: { tools: Array<{ name: string }> } }).result.tools;
-    expect(tools.map((t) => t.name).sort()).toEqual(["query_records", "suggest_ingestion_routes"]);
+    const names = (res.body as { result: { tools: Array<{ name: string }> } }).result.tools.map(
+      (t) => t.name,
+    );
+    for (const expected of ["query_records", "create_action", "update_budget_line", "draft_comm"]) {
+      expect(names).toContain(expected);
+    }
+    expect(names).not.toContain("onboarding_status");
   });
 
-  it("write tools are not callable — not merely hidden", async () => {
+  it("tools outside the MCP surface are not callable — not merely hidden", async () => {
     const session = await sessionFor(SLUG_A, KEY_A_OWNER);
-    const res = await call(session, "create_action", { title: "smuggled write" });
+    const res = await call(session, "onboarding_status", {});
     expect(res.error?.code).toBe(-32602);
-    const count = await prisma.platActionHub.count({ where: { orgId: orgAId } });
-    expect(count).toBe(0);
   });
 
   it("acknowledges notifications with 202 and no body", async () => {
@@ -265,5 +287,93 @@ describe("tenancy through tools/call", () => {
     const text = (await call(session, "query_records", { table: "jobs" })).result!.content[0].text;
     expect(text).toContain("Alpha Build");
     expect(text).not.toContain("Aurora Extension");
+  });
+});
+
+describe("W3: writes through the approval gate", () => {
+  it("scopes the tool listing to the session member's role", async () => {
+    const broker = await sessionFor(SLUG_A, KEY_A_BROKER);
+    const res = await handleMcpMessage(broker, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const names = (res.body as { result: { tools: Array<{ name: string }> } }).result.tools.map(
+      (t) => t.name,
+    );
+    expect(names).toContain("query_records");
+    expect(names).toContain("create_action"); // broker may flag a decision needed
+    expect(names).not.toContain("update_budget_line");
+    expect(names).not.toContain("save_decision");
+  });
+
+  it("auto_low_risk: a low-risk write executes, attributed to the MCP actor", async () => {
+    const session = await sessionFor(SLUG_A, KEY_A_OWNER);
+    const res = await call(session, "create_action", {
+      title: "MCP-created action",
+      proposalReason: "approval-gate proof",
+    });
+    expect(res.result?.isError).toBe(false);
+    expect(res.result!.content[0].text).toMatch(/executed/i);
+
+    const row = await prisma.platActionHub.findFirst({
+      where: { orgId: orgAId, title: "MCP-created action" },
+    });
+    expect(row).not.toBeNull();
+    const log = await prisma.platExecutionLog.findFirst({
+      where: { orgId: orgAId, actorName: "mcp:owner@a.test", status: "executed" },
+    });
+    expect(log).not.toBeNull();
+    expect(log!.actorType).toBe("ai");
+  });
+
+  it("a high-risk write ALWAYS lands as a pending proposal, even under auto_low_risk", async () => {
+    const session = await sessionFor(SLUG_A, KEY_A_OWNER);
+    const res = await call(session, "propose_rule", {
+      description: "Always cross-check CASHFLOWS before vendor writes",
+      proposalReason: "approval-gate proof",
+    });
+    expect(res.result?.isError).toBe(false);
+    expect(res.result!.content[0].text).toMatch(/must approve|pending approval/i);
+
+    const pending = await prisma.platPendingWrite.findFirst({
+      where: { orgId: orgAId, tableKey: "learning_rule", status: "proposed" },
+    });
+    expect(pending).not.toBeNull();
+    expect(pending!.actorName).toBe("mcp:owner@a.test");
+    expect(pending!.actorType).toBe("ai");
+    const rule = await prisma.platLearningRule.findFirst({
+      where: { orgId: orgAId, description: { contains: "cross-check CASHFLOWS" } },
+    });
+    expect(rule).toBeNull(); // proposed, not written
+  });
+
+  it("approve_required (org B default): even a low-risk write only proposes", async () => {
+    const session = await sessionFor(SLUG_B, KEY_B_OWNER);
+    const res = await call(session, "create_action", { title: "B action via MCP" });
+    expect(res.result?.isError).toBe(false);
+    expect(res.result!.content[0].text).toMatch(/must approve|pending approval/i);
+    const pending = await prisma.platPendingWrite.findFirst({
+      where: { orgId: orgBId, tableKey: "action", status: "proposed" },
+    });
+    expect(pending).not.toBeNull();
+    const row = await prisma.platActionHub.findFirst({
+      where: { orgId: orgBId, title: "B action via MCP" },
+    });
+    expect(row).toBeNull(); // proposed, not written
+  });
+
+  it("role write gates hold: a broker cannot save a decision", async () => {
+    const session = await sessionFor(SLUG_A, KEY_A_BROKER);
+    const res = await call(session, "save_decision", { description: "broker overreach" });
+    expect(res.result?.isError).toBe(true);
+    expect(res.result!.content[0].text).toMatch(/read-only for assistant writes/i);
+  });
+
+  it("cross-org writes are refused: org A cannot update org B's action", async () => {
+    const session = await sessionFor(SLUG_A, KEY_A_OWNER);
+    const res = await call(session, "update_action", { recordId: bActionId, status: "done" });
+    expect(res.result?.isError).toBe(true);
+    expect(res.result!.content[0].text).toMatch(/not found in this organisation/i);
+    const untouched = await prisma.platActionHub.findFirst({
+      where: { id: bActionId, orgId: orgBId },
+    });
+    expect(untouched!.status).not.toBe("done");
   });
 });

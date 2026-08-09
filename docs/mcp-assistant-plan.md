@@ -153,6 +153,15 @@ authenticated (org, user) session context must be impossible to execute — and
   verify a high-risk write from an external client lands as a
   `PlatPendingWrite` proposal and appears in the app's approval queue with
   correct actor attribution in `EXECUTION_LOG`.
+  **DONE 2026-08-09:** the MCP surface is now the full assistant tool set
+  minus `onboarding_status` (explicit allow-list in `mcp/server.ts`); tool
+  listing is session-scoped by role. Six new tests prove: auto_low_risk
+  executes low-risk writes with `mcp:<email>` EXECUTION_LOG attribution;
+  high-risk ALWAYS proposes (even auto_low_risk); approve_required proposes
+  everything; broker write gate holds; cross-org update refused by the
+  ownership guard. Live-verified on dulong-downs-didi: the proposal landed
+  in the org's OWN tenant database (aequilibri_t_dulong_downs_didi) via
+  db(ctx) — the §5 provisioned-tenant-routing proof observed in the wild.
 - **W4 — OAuth for human consumers** (Claude Desktop/Code): Clerk-backed
   OAuth 2.1 flow, role-scoped tool listing.
 - **W5 — (Optional, later) internal dogfood:** route the in-app assistant's
