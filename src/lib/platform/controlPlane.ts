@@ -361,6 +361,31 @@ export async function addOrgMcpKey(slug: string, key: McpKeyEntry): Promise<void
   });
 }
 
+/** Revoke MCP keys (W6 ops/offboarding): by label, by member email, or all.
+ *  Returns how many keys were removed. Revocation bites on the next request —
+ *  sessions are stateless, nothing is cached. */
+export async function removeOrgMcpKeys(
+  slug: string,
+  match: { label?: string; memberEmail?: string; all?: boolean },
+): Promise<number> {
+  const before = await getOrgMcpKeys(slug);
+  const keep = match.all
+    ? []
+    : before.filter(
+        (k) =>
+          !(
+            (match.label !== undefined && k.label === match.label) ||
+            (match.memberEmail !== undefined &&
+              k.memberEmail.toLowerCase() === match.memberEmail.toLowerCase())
+          ),
+      );
+  if (keep.length === before.length) return 0;
+  await mergeSettings(slug, (s) => {
+    s.mcpKeys = keep;
+  });
+  return before.length - keep.length;
+}
+
 export async function setOrgAiAuthority(slug: string, aiAuthority: string): Promise<boolean> {
   const org = await prisma.platOrganisation.findFirst({ where: { slug } });
   if (!org) return false;

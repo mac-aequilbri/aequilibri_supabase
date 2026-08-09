@@ -6,8 +6,10 @@
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma, prismaUnscoped } from "@/lib/db";
+import { removeOrgMcpKeys } from "@/lib/platform/controlPlane";
 import { projectIntelligenceAgent } from "@/services/platform/agents/projectIntelligence";
 import { executeToolViaMcp } from "./client";
+import { checkMcpRateLimit, resetMcpRateLimit } from "./rateLimit";
 import { hashMcpKey, resolveMcpSession, type McpSession } from "./session";
 import { handleMcpMessage } from "./server";
 
@@ -555,5 +557,72 @@ describe("W4: OAuth access tokens for human MCP consumers", () => {
     const body = (await res.json()) as { resource: string; authorization_servers: string[] };
     expect(body.resource).toBe("https://app.example/api/mcp/test-mcp-a");
     expect(body.authorization_servers).toEqual([ISSUER]);
+  });
+});
+
+describe("W6: rate limits and key revocation", () => {
+  let savedLimit: string | undefined;
+  beforeAll(() => {
+    savedLimit = process.env.MCP_RATE_LIMIT_PER_MIN;
+  });
+  afterAll(() => {
+    if (savedLimit === undefined) delete process.env.MCP_RATE_LIMIT_PER_MIN;
+    else process.env.MCP_RATE_LIMIT_PER_MIN = savedLimit;
+    resetMcpRateLimit();
+  });
+
+  it("allows up to the per-org limit, then blocks with a retry hint", () => {
+    process.env.MCP_RATE_LIMIT_PER_MIN = "3";
+    resetMcpRateLimit();
+    const t0 = 1_000_000;
+    for (let i = 0; i < 3; i++) expect(checkMcpRateLimit("org-x", t0 + i).allowed).toBe(true);
+    const blocked = checkMcpRateLimit("org-x", t0 + 3);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+  });
+
+  it("orgs are limited independently and windows reset", () => {
+    process.env.MCP_RATE_LIMIT_PER_MIN = "1";
+    resetMcpRateLimit();
+    const t0 = 2_000_000;
+    expect(checkMcpRateLimit("org-a", t0).allowed).toBe(true);
+    expect(checkMcpRateLimit("org-a", t0 + 1).allowed).toBe(false);
+    expect(checkMcpRateLimit("org-b", t0 + 2).allowed).toBe(true); // other org unaffected
+    expect(checkMcpRateLimit("org-a", t0 + 61_000).allowed).toBe(true); // new window
+  });
+
+  it("the endpoint sheds over-limit traffic before auth, with Retry-After", async () => {
+    process.env.MCP_RATE_LIMIT_PER_MIN = "2";
+    resetMcpRateLimit();
+    const { POST } = await import("@/app/api/mcp/[org]/route");
+    const { NextRequest } = await import("next/server");
+    const hit = () =>
+      POST(
+        new NextRequest("https://app.example/api/mcp/rate-test-org", {
+          method: "POST",
+          body: '{"jsonrpc":"2.0","id":1,"method":"ping"}',
+        }),
+        { params: Promise.resolve({ org: "rate-test-org" }) },
+      );
+    expect((await hit()).status).toBe(404); // unknown org, but under the limit
+    expect((await hit()).status).toBe(404);
+    const third = await hit();
+    expect(third.status).toBe(429);
+    expect(Number(third.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    resetMcpRateLimit();
+  });
+
+  it("revoking a member's keys cuts access on the next request, others unaffected", async () => {
+    delete process.env.MCP_RATE_LIMIT_PER_MIN;
+    resetMcpRateLimit();
+    expect((await resolveMcpSession(SLUG_A, bearer(KEY_A_BROKER))).ok).toBe(true);
+
+    const removed = await removeOrgMcpKeys(SLUG_A, { memberEmail: "broker@a.test" });
+    expect(removed).toBe(1);
+
+    const revoked = await resolveMcpSession(SLUG_A, bearer(KEY_A_BROKER));
+    expect(revoked.ok).toBe(false);
+    if (!revoked.ok) expect(revoked.status).toBe(401);
+    expect((await resolveMcpSession(SLUG_A, bearer(KEY_A_OWNER))).ok).toBe(true);
   });
 });

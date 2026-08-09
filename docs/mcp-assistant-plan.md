@@ -199,6 +199,30 @@ authenticated (org, user) session context must be impossible to execute — and
 - **W6 — Ops:** deploy inside the AWS plan's VPC (ap-southeast-2), per-org
   rate limits, usage logging per session org, kill-switch per org
   (registry flag), offboarding = revoke keys + org's MCP access with its DB.
+  **DONE 2026-08-09 (code side; hosting rides the AWS plan).**
+  - *Rate limits:* fixed per-org one-minute window (`mcp/rateLimit.ts`,
+    `MCP_RATE_LIMIT_PER_MIN`, default 120, 0 disables), applied BEFORE the
+    control-plane key lookup so brute force is shed early; 429 +
+    Retry-After. In-process state is valid under the single-instance pin —
+    revisit with the shared-Redis item if that pin lifts.
+  - *Usage metering:* one structured "MCP usage" log line per tool call
+    (org, tool, ok/status, external vs in-app, acting member, ms) —
+    CloudWatch-queryable per tenant once on AWS, mirroring "Claude usage".
+  - *Kill switch:* the active `mcp:in` connection row (since W2); cuts keys
+    AND OAuth. `scripts/mcp-revoke-key.mjs --disable` flips it.
+  - *Key lifecycle:* `removeOrgMcpKeys` + `scripts/mcp-revoke-key.mjs`
+    (--list / --label / --email / --all); revocation bites on the next
+    request (sessions are stateless). Rotation = revoke + reissue.
+  - *Offboarding runbook:* 1) `mcp-revoke-key.mjs --slug <org> --all
+    --disable` (keys gone, kill switch off — OAuth consumers cut too);
+    2) org deactivation in the registry (`isActive=false` also 404s the
+    endpoint via session resolution); 3) tenant-database decommission per
+    §2b / the AWS plan's backup-then-drop runbook.
+  - *Hosting/VPC:* nothing MCP-specific to deploy — the endpoint is a route
+    in the app task; it inherits the AWS plan §1 topology as-is.
+  4 tests (limit window, per-org independence, pre-auth 429 at the route,
+  live revocation). 330/330 green; issue→list→revoke smoke-tested on the
+  dulong-downs-didi dev org.
 
 ## 5. Test matrix (the tenancy proofs, non-negotiable before any org is live)
 

@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { oauthEnabled } from "@/services/platform/mcp/oauth";
+import { checkMcpRateLimit } from "@/services/platform/mcp/rateLimit";
 import { resolveMcpSession } from "@/services/platform/mcp/session";
 import { handleMcpMessage } from "@/services/platform/mcp/server";
 
@@ -25,6 +26,16 @@ export async function POST(
   { params }: { params: Promise<{ org: string }> },
 ): Promise<NextResponse> {
   const { org } = await params;
+
+  // W6: shed over-limit traffic per org BEFORE the control-plane key lookup,
+  // so a runaway or brute-forcing client can't hammer the registry.
+  const rate = checkMcpRateLimit(org);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded for this organisation" },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+    );
+  }
 
   const auth = await resolveMcpSession(org, request.headers.get("authorization"));
   if (!auth.ok) {

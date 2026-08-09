@@ -15,6 +15,7 @@
 // it dependency-free means the whole tenant-auth surface is in this repo.
 
 import { touchConnectionHealth } from "@/lib/platform/controlPlane";
+import { logger } from "@/lib/logger";
 import type { Actor } from "@/lib/platform/types";
 import { executeToolUse } from "@/services/platform/assistant/executor";
 import { policyByName, roleCanUseTool, toolsByName } from "@/services/platform/assistant/tools";
@@ -116,6 +117,7 @@ async function callTool(session: McpSession, id: JsonRpcId, params: unknown): Pr
     name: `mcp:${session.user.email}`,
     role: session.user.role,
   };
+  const startedAt = Date.now();
   const outcome = await executeToolUse(
     session.ctx,
     actor,
@@ -128,6 +130,18 @@ async function callTool(session: McpSession, id: JsonRpcId, params: unknown): Pr
       platformAdmin: session.platformAdmin === true,
     },
   );
+  // W6 usage metering — one structured line per tool call, keyed by org, so
+  // per-tenant MCP volume/spend is queryable from logs (CloudWatch on AWS),
+  // mirroring the "Claude usage" pattern in lib/claude.ts.
+  logger.info("MCP usage", {
+    orgSlug: session.ctx.orgSlug,
+    tool: name,
+    ok: outcome.ok,
+    status: outcome.status,
+    external: !session.actor,
+    actingAs: session.user.email,
+    ms: Date.now() - startedAt,
+  });
   if (!session.actor) {
     // Health telemetry is for external consumers; the in-app path has its own
     // EXECUTION_LOG chat entries.
