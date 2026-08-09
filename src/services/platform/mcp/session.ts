@@ -5,19 +5,26 @@
 // from the URL slug, and the presented key must verify against THAT org's
 // registry (a leaked key for org A fails on org B's endpoint).
 //
-// Auth chain, fail-closed at each step:
+// Two credential kinds share one auth chain, fail-closed at each step:
 //   1. slug → control-plane registry → OrgCtx (404 unknown/inactive org)
-//   2. Bearer key → SHA-256 → must match one of the org's stored key hashes
-//      (401; constant-time compare)
+//   2. the bearer credential resolves to a member EMAIL:
+//        - `aeq_mcp_…` API key (machine consumers, plan W2/W3): SHA-256 must
+//          match one of the org's stored key hashes (401; constant-time)
+//        - anything else is treated as an OAuth access token (human
+//          consumers, plan W4): resolved via the configured authorization
+//          server's userinfo endpoint (401 when invalid or OAuth is off)
 //   3. the org must have an active `mcp:in` connection row — the per-org
 //      kill switch, same default-deny the hooks route applies (403)
-//   4. the key's bound member must still be an active org member (403) —
-//      their role drives tool gating and RLS job scoping downstream.
+//   4. the email must be an active org member (403) — their role drives
+//      tool gating and RLS job scoping downstream. An OAuth token grants
+//      nothing an org hasn't granted that member.
 
 import { createHash, timingSafeEqual } from "node:crypto";
+import { platformAdminEmails } from "@/lib/platform/authConfig";
 import { getActiveConnection, getOrgMcpKeys } from "@/lib/platform/controlPlane";
 import { resolveMember, resolveOrgCtx, type CurrentUser } from "@/lib/platform/principal";
 import type { Actor, OrgCtx } from "@/lib/platform/types";
+import { oauthEnabled, resolveOAuthEmail } from "./oauth";
 
 export interface McpSession {
   ctx: OrgCtx;
@@ -51,6 +58,24 @@ function hashesEqual(aHex: string, bHex: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+const API_KEY_PREFIX = "aeq_mcp_";
+
+/** Steps 3–4 shared by both credential kinds: the org's kill switch, then
+ *  membership — the walls that make a credential worth exactly what the org
+ *  granted its member. */
+async function sessionForEmail(
+  ctx: OrgCtx,
+  email: string,
+  opts: { platformAdmin: boolean; memberGoneError: string },
+): Promise<McpSessionResult> {
+  if (!(await getActiveConnection(ctx.orgSlug, "mcp", "in"))) {
+    return { ok: false, status: 403, error: "MCP access is not enabled for this organisation" };
+  }
+  const user = await resolveMember(ctx, email);
+  if (!user) return { ok: false, status: 403, error: opts.memberGoneError };
+  return { ok: true, session: { ctx, user, platformAdmin: opts.platformAdmin } };
+}
+
 export async function resolveMcpSession(
   orgSlug: string,
   authorization: string | null,
@@ -61,26 +86,29 @@ export async function resolveMcpSession(
   const token = /^Bearer\s+(.+)$/i.exec(authorization ?? "")?.[1]?.trim() ?? "";
   if (!token) return { ok: false, status: 401, error: "Missing bearer token" };
 
-  const presented = hashMcpKey(token);
-  const keys = await getOrgMcpKeys(orgSlug);
-  const match = keys.find((k) => hashesEqual(k.keyHash, presented));
-  if (!match) return { ok: false, status: 401, error: "Invalid API key" };
-
-  if (!(await getActiveConnection(orgSlug, "mcp", "in"))) {
-    return { ok: false, status: 403, error: "MCP access is not enabled for this organisation" };
+  // Machine consumers: per-org API key. Never platform operators; the
+  // in-process client (plan W5) is the only constructor of narrower sessions.
+  if (token.startsWith(API_KEY_PREFIX)) {
+    const presented = hashMcpKey(token);
+    const keys = await getOrgMcpKeys(orgSlug);
+    const match = keys.find((k) => hashesEqual(k.keyHash, presented));
+    if (!match) return { ok: false, status: 401, error: "Invalid API key" };
+    return sessionForEmail(ctx, match.memberEmail, {
+      platformAdmin: false,
+      memberGoneError: "The member this key acts as is no longer active in this organisation",
+    });
   }
 
-  const user = await resolveMember(ctx, match.memberEmail);
-  if (!user) {
-    return {
-      ok: false,
-      status: 403,
-      error: "The member this key acts as is no longer active in this organisation",
-    };
+  // Human consumers (plan W4): an OAuth access token from the configured
+  // authorization server. The token holder's email is the identity; platform
+  // operators are the same PLATFORM_ADMIN_EMAILS set the app uses.
+  if (!oauthEnabled()) {
+    return { ok: false, status: 401, error: "Invalid API key" };
   }
-
-  // API-key sessions are never platform operators and get the full public
-  // surface (no tool subset); the in-process client (plan W5) is the only
-  // constructor of narrower sessions.
-  return { ok: true, session: { ctx, user, platformAdmin: false } };
+  const email = await resolveOAuthEmail(token);
+  if (!email) return { ok: false, status: 401, error: "Invalid or expired access token" };
+  return sessionForEmail(ctx, email, {
+    platformAdmin: platformAdminEmails().includes(email),
+    memberGoneError: "This account is not an active member of this organisation",
+  });
 }

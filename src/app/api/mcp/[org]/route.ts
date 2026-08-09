@@ -10,6 +10,7 @@
 // stream and no session to delete.
 
 import { NextRequest, NextResponse } from "next/server";
+import { oauthEnabled } from "@/services/platform/mcp/oauth";
 import { resolveMcpSession } from "@/services/platform/mcp/session";
 import { handleMcpMessage } from "@/services/platform/mcp/server";
 
@@ -27,7 +28,14 @@ export async function POST(
 
   const auth = await resolveMcpSession(org, request.headers.get("authorization"));
   if (!auth.ok) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status });
+    // 401s carry the RFC 9728 discovery challenge (plan W4) so OAuth-capable
+    // MCP clients can find the authorization server and start their flow.
+    const headers: Record<string, string> = {};
+    if (auth.status === 401 && oauthEnabled()) {
+      const meta = `${request.nextUrl.origin}/.well-known/oauth-protected-resource/api/mcp/${encodeURIComponent(org)}`;
+      headers["WWW-Authenticate"] = `Bearer resource_metadata="${meta}"`;
+    }
+    return NextResponse.json({ error: auth.error }, { status: auth.status, headers });
   }
 
   const raw = await request.text();

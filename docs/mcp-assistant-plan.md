@@ -164,6 +164,22 @@ authenticated (org, user) session context must be impossible to execute — and
   db(ctx) — the §5 provisioned-tenant-routing proof observed in the wild.
 - **W4 — OAuth for human consumers** (Claude Desktop/Code): Clerk-backed
   OAuth 2.1 flow, role-scoped tool listing.
+  **DONE 2026-08-09 (resource-server side; AS is external).** The endpoint
+  accepts two bearer kinds: `aeq_mcp_…` API keys, and OAuth access tokens
+  resolved to the holder's email via the configured AS's userinfo endpoint
+  (`mcp/oauth.ts`, 60s cache, fail-closed). Both then pass the SAME walls:
+  active `mcp:in` connection + active org membership — a token grants
+  nothing an org hasn't granted that member. Discovery: RFC 9728 metadata
+  at `/.well-known/oauth-protected-resource/...` naming the issuer, and a
+  `WWW-Authenticate: Bearer resource_metadata=…` challenge on 401s.
+  Operator flag maps from PLATFORM_ADMIN_EMAILS. 7 tests (mocked issuer);
+  unconfigured defaults wire-verified (metadata 404, generic 401, no
+  challenge). **Go-live (needs the Clerk-configured deployment):** create a
+  Clerk OAuth application with dynamic client registration enabled, set
+  `MCP_OAUTH_ISSUER` to the Clerk frontend-API origin (userinfo default
+  `<issuer>/oauth/userinfo`, override via `MCP_OAUTH_USERINFO_URL`), then
+  connect Claude Desktop/Code to `https://<app>/api/mcp/<org>` and verify
+  the full authorize→token→tools/list flow against staging.
 - **W5 — (Optional, later) internal dogfood:** route the in-app assistant's
   tool execution through the MCP client in staging to confirm parity; adopt
   only if the added hop earns its keep (it may never need to).

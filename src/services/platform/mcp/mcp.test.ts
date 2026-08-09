@@ -4,7 +4,7 @@
 // switch, member deactivation, role-based table denies, RLS job scoping, and
 // that an orgId smuggled into tool arguments changes nothing.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma, prismaUnscoped } from "@/lib/db";
 import { projectIntelligenceAgent } from "@/services/platform/agents/projectIntelligence";
 import { executeToolViaMcp } from "./client";
@@ -13,10 +13,12 @@ import { handleMcpMessage } from "./server";
 
 const SLUG_A = "test-mcp-a";
 const SLUG_B = "test-mcp-b";
-const KEY_A_OWNER = "test_mcp_key_a_owner";
-const KEY_A_BROKER = "test_mcp_key_a_broker";
-const KEY_A_BUILDER = "test_mcp_key_a_builder";
-const KEY_B_OWNER = "test_mcp_key_b_owner";
+// Keys carry the real aeq_mcp_ prefix — the session resolver routes on it
+// (prefixed → key path, anything else → OAuth path).
+const KEY_A_OWNER = "aeq_mcp_test_a_owner";
+const KEY_A_BROKER = "aeq_mcp_test_a_broker";
+const KEY_A_BUILDER = "aeq_mcp_test_a_builder";
+const KEY_B_OWNER = "aeq_mcp_test_b_owner";
 
 const bearer = (key: string) => `Bearer ${key}`;
 
@@ -452,5 +454,106 @@ describe("W5: the in-app assistant's in-process MCP client", () => {
     const notAdmin = await inAppSession({ platformAdmin: false, tools: ["onboarding_status"] });
     const denied = await executeToolViaMcp(notAdmin, { name: "onboarding_status", input: {} });
     expect(denied.ok).toBe(false);
+  });
+});
+
+describe("W4: OAuth access tokens for human MCP consumers", () => {
+  const ISSUER = "https://auth.test";
+  const TOKENS: Record<string, string> = {
+    "oauth-token-owner-a": "owner@a.test",
+    "oauth-token-stranger": "stranger@nowhere.test",
+  };
+  let savedIssuer: string | undefined;
+  let savedAdmins: string | undefined;
+
+  beforeAll(() => {
+    savedIssuer = process.env.MCP_OAUTH_ISSUER;
+    savedAdmins = process.env.PLATFORM_ADMIN_EMAILS;
+    process.env.MCP_OAUTH_ISSUER = ISSUER;
+    // The AS's userinfo endpoint, mocked: token → email claim.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: { headers?: Record<string, string> }) => {
+        if (String(url) !== `${ISSUER}/oauth/userinfo`) {
+          return new Response("not found", { status: 404 });
+        }
+        const token = /^Bearer\s+(.+)$/.exec(init?.headers?.Authorization ?? "")?.[1] ?? "";
+        const email = TOKENS[token];
+        return email
+          ? new Response(JSON.stringify({ sub: "u_1", email }), { status: 200 })
+          : new Response("", { status: 401 });
+      }),
+    );
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+    if (savedIssuer === undefined) delete process.env.MCP_OAUTH_ISSUER;
+    else process.env.MCP_OAUTH_ISSUER = savedIssuer;
+    if (savedAdmins === undefined) delete process.env.PLATFORM_ADMIN_EMAILS;
+    else process.env.PLATFORM_ADMIN_EMAILS = savedAdmins;
+  });
+
+  it("a valid token resolves to the member's identity — not an operator by default", async () => {
+    delete process.env.PLATFORM_ADMIN_EMAILS;
+    const res = await resolveMcpSession(SLUG_A, bearer("oauth-token-owner-a"));
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.session.user.email).toBe("owner@a.test");
+      expect(res.session.user.role).toBe("owner");
+      expect(res.session.platformAdmin).toBe(false);
+    }
+  });
+
+  it("membership is the wall: a valid token for a non-member is refused", async () => {
+    const res = await resolveMcpSession(SLUG_A, bearer("oauth-token-stranger"));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.status).toBe(403);
+  });
+
+  it("cross-org: org A's member token is refused on org B", async () => {
+    const res = await resolveMcpSession(SLUG_B, bearer("oauth-token-owner-a"));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.status).toBe(403);
+  });
+
+  it("an invalid or expired token is a 401", async () => {
+    const res = await resolveMcpSession(SLUG_A, bearer("oauth-token-revoked"));
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.status).toBe(401);
+      expect(res.error).toMatch(/access token/i);
+    }
+  });
+
+  it("PLATFORM_ADMIN_EMAILS grants the operator flag to a member's token", async () => {
+    process.env.PLATFORM_ADMIN_EMAILS = "owner@a.test";
+    const res = await resolveMcpSession(SLUG_A, bearer("oauth-token-owner-a"));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.session.platformAdmin).toBe(true);
+    delete process.env.PLATFORM_ADMIN_EMAILS;
+  });
+
+  it("with OAuth unconfigured, non-key tokens are refused without calling out", async () => {
+    delete process.env.MCP_OAUTH_ISSUER;
+    const res = await resolveMcpSession(SLUG_A, bearer("oauth-token-owner-a"));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.status).toBe(401);
+    process.env.MCP_OAUTH_ISSUER = ISSUER;
+  });
+
+  it("the RFC 9728 metadata document names the issuer and echoes the resource", async () => {
+    const { GET } = await import(
+      "@/app/.well-known/oauth-protected-resource/[[...resource]]/route"
+    );
+    const { NextRequest } = await import("next/server");
+    const req = new NextRequest(
+      "https://app.example/.well-known/oauth-protected-resource/api/mcp/test-mcp-a",
+    );
+    const res = await GET(req, { params: Promise.resolve({ resource: ["api", "mcp", "test-mcp-a"] }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { resource: string; authorization_servers: string[] };
+    expect(body.resource).toBe("https://app.example/api/mcp/test-mcp-a");
+    expect(body.authorization_servers).toEqual([ISSUER]);
   });
 });
