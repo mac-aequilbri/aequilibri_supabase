@@ -41,8 +41,18 @@ ENV DATABASE_URL="postgresql://build:build@localhost:5432/build" \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run db:generate && npm run build
 
-# ── migrate: the one-off release task (full node_modules + prisma CLI) ──────
+# ── migrate: the one-off release/ops task (full node_modules + prisma CLI,
+#    plus pg_dump 17 for backup-all-tenants.mjs — client major must match
+#    Supabase's PG 17; Debian ships 15, so pull from PGDG) ────────────────────
 FROM build AS migrate
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+     | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
+  && . /etc/os-release \
+  && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+     > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update && apt-get install -y --no-install-recommends postgresql-client-17 \
+  && apt-get purge -y curl gnupg && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 USER node
 CMD ["node", "scripts/migrate-all-tenants.mjs"]
