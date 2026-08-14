@@ -29,6 +29,9 @@ COPY . .
 # Next inlines NEXT_PUBLIC_* into the client bundle.
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=""
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+# Auth flows stay on our origin (in-app pages), never the hosted portal.
+ENV NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in \
+    NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 # Build-time placeholders only — the boot guard warns (not throws) and no
 # page connects at build; real values come from Secrets Manager at runtime.
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build" \
@@ -52,7 +55,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in \
+    NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 # Standalone output = server.js + file-traced node_modules (includes the
 # generated prisma clients and the serverExternalPackages natives).
 COPY --from=build --chown=node:node /app/.next/standalone ./
