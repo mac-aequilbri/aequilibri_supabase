@@ -29,6 +29,8 @@ COPY . .
 # page connects at build; real values come from Secrets Manager at runtime.
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build" \
     CONTROL_DATABASE_URL="postgresql://build:build@localhost:5432/build_control" \
+    DIRECT_URL="postgresql://build:build@localhost:5432/build" \
+    CONTROL_DIRECT_URL="postgresql://build:build@localhost:5432/build_control" \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run db:generate && npm run build
 

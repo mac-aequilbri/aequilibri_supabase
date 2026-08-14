@@ -1,11 +1,15 @@
 # Postgres-native deployment blueprint (migration-plan Phase 6).
 #
+# REFERENCE-ONLY (Phase 7 / owner decisions): the deploy target is AWS ECS
+# ap-southeast-2 with the database tier on Supabase Sydney (2026-08-13) —
+# see docs/aws-deployment-plan.md. Delete this file once ECS is proven (B6).
+# If it is ever revived: DATABASE_URL/CONTROL_DATABASE_URL are now the
+# Supabase transaction-pooler URLs and DIRECT_URL/CONTROL_DIRECT_URL
+# (session pooler) must be added for the pre-deploy migrate step.
+#
 # NOTE (Phase 7): Render has NO Australian region — this blueprint deploys app
-# compute only; the databases MUST live in an AU region (AWS/Azure/GCP Sydney,
-# Supabase/Neon ap-southeast-2). Whether app compute may run outside AU is the
-# open at-rest-vs-processing residency question — confirm with the client
-# before going live. This file intentionally no longer matches the original
-# repo's live service.
+# compute only; the databases MUST live in an AU region. This file
+# intentionally no longer matches the original repo's live service.
 services:
   - type: web
     name: aequilibri-postgres

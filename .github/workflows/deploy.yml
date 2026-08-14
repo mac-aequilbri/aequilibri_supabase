@@ -42,6 +42,9 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aequilibri
       CONTROL_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aequilibri_control
+      # Prisma CLI migrates via directUrl; no pooler in CI, so they mirror the above.
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/aequilibri
+      CONTROL_DIRECT_URL: postgresql://postgres:postgres@localhost:5432/aequilibri_control
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

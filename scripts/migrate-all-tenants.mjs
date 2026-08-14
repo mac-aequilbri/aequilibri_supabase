@@ -13,11 +13,28 @@ import { spawnSync } from "node:child_process";
 import { PrismaClient } from "@prisma/client";
 import { PrismaClient as ControlPrismaClient } from "@prisma/control-client";
 import { applyTenantRlsPin } from "./_tenant-rls.mjs";
+import { clearAutoEnabledRls } from "./_supabase.mjs";
+
+// Supabase auto-enables policy-less RLS on tables new migrations create,
+// default-denying the app role. Clear it after every deploy: wholesale on the
+// non-org-pinned core DBs, non-org-tables-only on pinned tenant DBs (the pin
+// re-applies right after). No-op on local databases.
+async function clearRls(url, opts) {
+  const client = new PrismaClient({ datasourceUrl: url });
+  try {
+    const n = await clearAutoEnabledRls(client, opts);
+    if (n) console.log(`   cleared auto-enabled RLS on ${n} tables`);
+  } finally {
+    await client.$disconnect();
+  }
+}
 
 function deploy(label, opts) {
   console.log(`\n== migrate deploy: ${label}`);
+  // Override BOTH URLs: with `directUrl` in the datasource the CLI migrates
+  // via DIRECT_URL — overriding only DATABASE_URL would migrate the wrong DB.
   const res = spawnSync("npx", ["prisma", "migrate", "deploy", ...(opts.schema ? ["--schema", opts.schema] : [])], {
-    env: { ...process.env, ...(opts.url ? { DATABASE_URL: opts.url } : {}) },
+    env: { ...process.env, ...(opts.url ? { DATABASE_URL: opts.url, DIRECT_URL: opts.url } : {}) },
     stdio: "inherit",
     shell: true,
   });
@@ -29,9 +46,11 @@ function deploy(label, opts) {
 
 // 1. Control DB.
 deploy("control (CONTROL_DATABASE_URL)", { schema: "prisma/control/schema.prisma" });
+await clearRls(process.env.CONTROL_DIRECT_URL || process.env.CONTROL_DATABASE_URL);
 
 // 2. Shared/default tenant DB.
 deploy("default tenant (DATABASE_URL)", {});
+await clearRls(process.env.DIRECT_URL || process.env.DATABASE_URL);
 
 // 3. Every provisioned per-org tenant DB, enumerated via the control registry
 //    (§2b rule 7: cross-tenant operations iterate the registry, never a
@@ -42,15 +61,21 @@ const controlDb = new ControlPrismaClient();
 const orgs = await controlDb.platOrganisation.findMany();
 const summary = [];
 for (const org of orgs) {
-  let url = null;
+  let pooledUrl = null;
+  let directUrl = null;
   try {
-    url = JSON.parse(org.settings || "{}")?.tenantDatabaseUrl || null;
+    const settings = JSON.parse(org.settings || "{}") || {};
+    pooledUrl = settings.tenantDatabaseUrl || null;
+    // Supabase entries carry a session-mode URL for CLI/ops work; legacy/local
+    // entries (no pooler) fall back to the runtime URL.
+    directUrl = settings.tenantDirectUrl || pooledUrl;
   } catch {
     /* malformed settings → treated as not provisioned */
   }
-  if (!url || url === process.env.DATABASE_URL) continue;
-  deploy(`tenant '${org.slug}'`, { url });
-  const client = new PrismaClient({ datasourceUrl: url });
+  if (!pooledUrl || pooledUrl === process.env.DATABASE_URL) continue;
+  deploy(`tenant '${org.slug}'`, { url: directUrl });
+  await clearRls(directUrl, { keepOrgIdTables: true });
+  const client = new PrismaClient({ datasourceUrl: directUrl });
   const pinned = await applyTenantRlsPin(client, org.id);
   await client.$disconnect();
   summary.push({ org: org.slug, rlsPinnedTables: pinned });

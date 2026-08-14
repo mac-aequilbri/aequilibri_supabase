@@ -5,6 +5,10 @@
 //  - dulong-downs        single long_project instance (the UC2 replacement, persona "Didi")
 //  - northshore-builders multi-project MSME tenant (UC3 replacement)
 //  - coastal-fitouts     second MSME tenant (proves multi-tenancy)
+//
+// §2b split: the org registry row (PlatOrganisation) and the owner membership
+// (PlatCtlTeamMember) live in the CONTROL database; all demo rows below stay
+// in the (default) tenant database, keyed by the control org id.
 
 const J = (v) => JSON.stringify(v);
 
@@ -12,12 +16,23 @@ const J = (v) => JSON.stringify(v);
 export const DEMO_PORTAL_TOKEN =
   "demo0000portal0000northshore0000riverview0000token0000000001";
 
-async function upsertOrg(prisma, data) {
-  return prisma.platOrganisation.upsert({
+async function upsertOrg(controlDb, data, ownerEmail, ownerName) {
+  const org = await controlDb.platOrganisation.upsert({
     where: { slug: data.slug },
     update: {},
     create: data,
   });
+  // Owner membership in the control-plane team store (authoritative under
+  // Clerk auth; demo mode ignores it but the row keeps auth-path tests real).
+  const member = await controlDb.platCtlTeamMember.findFirst({
+    where: { orgSlug: data.slug, email: ownerEmail },
+  });
+  if (!member) {
+    await controlDb.platCtlTeamMember.create({
+      data: { orgSlug: data.slug, email: ownerEmail, name: ownerName, role: "owner" },
+    });
+  }
+  return org;
 }
 
 async function orgIsSeeded(prisma, orgId) {
@@ -46,8 +61,8 @@ async function seedCfgDefaults(prisma, orgId, { zones = [], categories = [] } = 
 
 // ── Org 1: Dulong Downs (single long-project instance — UC2 replacement) ──────
 
-async function seedDulongDowns(prisma) {
-  const org = await upsertOrg(prisma, {
+async function seedDulongDowns(prisma, controlDb) {
+  const org = await upsertOrg(controlDb, {
     slug: "dulong-downs",
     name: "Dulong Downs",
     vertical: "construction",
@@ -62,7 +77,7 @@ async function seedDulongDowns(prisma) {
       },
       features: { procurement: true, room_matrix: true, project_plan: true, variations: false, reports: false, meeting_minutes: false, portal: false, accounting: false, risks: false },
     }),
-  });
+  }, "antonio@dulongdowns.example", "Antonio");
   if (await orgIsSeeded(prisma, org.id)) {
     console.log("  · platform org dulong-downs already seeded — skipped");
     return;
@@ -231,8 +246,8 @@ async function seedDulongDowns(prisma) {
 
 // ── Org 2: Northshore Builders (multi-project MSME — UC3 replacement) ─────────
 
-async function seedNorthshore(prisma) {
-  const org = await upsertOrg(prisma, {
+async function seedNorthshore(prisma, controlDb) {
+  const org = await upsertOrg(controlDb, {
     slug: "northshore-builders",
     name: "Northshore Builders Pty Ltd",
     vertical: "construction",
@@ -243,7 +258,7 @@ async function seedNorthshore(prisma) {
       assistant: { name: "Site Assistant", persona: "You are the AI project coordinator for Northshore Builders. Be concise and practical." },
       features: { risks: true, variations: true, reports: true, meeting_minutes: true, portal: true, accounting: true, bim: true, delay_cascade: true, procurement: false, room_matrix: false, project_plan: false },
     }),
-  });
+  }, "priya@northshore.example", "Priya Raman");
   if (await orgIsSeeded(prisma, org.id)) {
     console.log("  · platform org northshore-builders already seeded — skipped");
     return;
@@ -455,8 +470,8 @@ async function seedNorthshore(prisma) {
 
 // ── Org 3: Coastal Fitouts (second MSME tenant — proves isolation) ────────────
 
-async function seedCoastal(prisma) {
-  const org = await upsertOrg(prisma, {
+async function seedCoastal(prisma, controlDb) {
+  const org = await upsertOrg(controlDb, {
     slug: "coastal-fitouts",
     name: "Coastal Fitouts",
     vertical: "construction",
@@ -467,7 +482,7 @@ async function seedCoastal(prisma) {
       assistant: { name: "Fitout Assistant", persona: "You are the AI coordinator for Coastal Fitouts, a commercial fitout contractor. Be brief." },
       features: { risks: true, variations: true, reports: true, meeting_minutes: false, portal: false, accounting: false, bim: false, delay_cascade: false, procurement: false, room_matrix: false, project_plan: false },
     }),
-  });
+  }, "sam@coastalfitouts.example", "Sam Okafor");
   if (await orgIsSeeded(prisma, org.id)) {
     console.log("  · platform org coastal-fitouts already seeded — skipped");
     return;
@@ -517,10 +532,10 @@ async function seedCoastal(prisma) {
   console.log("  ✓ platform org coastal-fitouts seeded");
 }
 
-export async function seedPlatform(prisma) {
+export async function seedPlatform(prisma, controlDb) {
   for (const fn of [seedDulongDowns, seedNorthshore, seedCoastal]) {
     try {
-      await fn(prisma);
+      await fn(prisma, controlDb);
     } catch (err) {
       console.log(`  ! platform seed (${fn.name}): skipped (${err?.message ?? err})`);
     }

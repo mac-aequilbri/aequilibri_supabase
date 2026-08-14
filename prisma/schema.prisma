@@ -10,8 +10,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // CLI-only (migrate/db push): session-mode connection. Runtime clients use
+  // `url`, which in production is a Supavisor transaction-mode pooled URL.
+  directUrl = env("DIRECT_URL")
 }
 
 // =====================================================================

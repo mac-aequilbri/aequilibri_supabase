@@ -9,9 +9,12 @@
 // Run locally with the dev client:  node prisma/seed.mjs
 
 import { PrismaClient } from "@prisma/client";
+// §2b split: org registry + control-plane team rows go to the CONTROL database.
+import { PrismaClient as ControlPrismaClient } from "@prisma/control-client";
 import { seedPlatform } from "./seed-platform.mjs";
 
 const prisma = new PrismaClient();
+const controlDb = new ControlPrismaClient();
 
 async function seedIfEmpty(label, model, rows) {
   try {
@@ -83,7 +86,7 @@ async function main() {
 
   // ── Platform (Plat*) — three demo organisations on the shared core ─────────
   // (UC2/UC3 were rebuilt onto this core; their old seed blocks are gone.)
-  await seedPlatform(prisma);
+  await seedPlatform(prisma, controlDb);
 
   console.log("Seed complete.");
 }
@@ -92,5 +95,6 @@ main()
   .catch((err) => console.log(`Seed error (ignored): ${err?.message ?? err}`))
   .finally(async () => {
     await prisma.$disconnect().catch(() => {});
+    await controlDb.$disconnect().catch(() => {});
     process.exit(0); // never fail the build on seed problems
   });

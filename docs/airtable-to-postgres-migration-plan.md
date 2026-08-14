@@ -56,6 +56,18 @@ Airtable topology rather than flattening it:
 | One base per client org | **One tenant DB per org** |
 | Template-base cloning at onboarding | `CREATE DATABASE` + `migrate deploy` + seed |
 
+> **Amendment 2026-08-13 (owner decision: Supabase replaces direct Postgres).**
+> The topology is unchanged; only the physical realisation moves: "one tenant
+> DB per org" = **one Supabase project per org** (Sydney region), and
+> `CREATE DATABASE` becomes a Management API project creation
+> (`scripts/_supabase.mjs` / rewritten `scripts/provision-tenant-db.mjs`).
+> Registry entries now store a URL **pair**: `settings.tenantDatabaseUrl`
+> (transaction pooler :6543, `aequilibri_app` role, `?pgbouncer=true` — what
+> `db(ctx)` uses) plus `settings.tenantDirectUrl` (session pooler :5432,
+> `postgres` role — what migrate fan-out and `pg_dump` use). All 8 rules
+> below stand as written; rule 4's RLS pin is made real by the NOBYPASSRLS
+> runtime role. See docs/aws-deployment-plan.md (amended) for the rest.
+
 **Design rules (all 8 mandatory):**
 
 1. **Split the Prisma clients along the existing `db.ts` guard-regex line.**
