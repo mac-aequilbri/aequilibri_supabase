@@ -55,6 +55,14 @@ variable "clerk_publishable_key" {
   default = ""
 }
 
+# Flip to true AFTER the app.aequilibri.com NS delegation exists at
+# Squarespace: validates the ACM cert, adds the :443 listener, turns :80
+# into a 301 redirect, creates the Route53 alias, and attaches the WAF.
+variable "enable_https" {
+  type    = bool
+  default = false
+}
+
 # Comma-separated emails allowed to provision customer organisations in-app.
 variable "platform_admin_emails" {
   type    = string

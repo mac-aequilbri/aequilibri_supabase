@@ -1,7 +1,7 @@
 github_repo = "mac-aequilbri/aequilibri_supabase"
 
 # Actual sub claim observed in this repo's OIDC tokens (ID-hardened format).
-github_oidc_sub = "repo:mac-aequilbri@286524426/aequilibri_supabase@1333867357:ref:refs/heads/main"
+github_oidc_sub   = "repo:mac-aequilbri@286524426/aequilibri_supabase@1333867357:ref:refs/heads/main"
 app_desired_count = 1
 
 # Public by design (ships in every client bundle) — dev instance for bring-up;
