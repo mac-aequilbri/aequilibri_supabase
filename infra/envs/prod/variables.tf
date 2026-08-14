@@ -55,6 +55,12 @@ variable "clerk_publishable_key" {
   default = ""
 }
 
+# Comma-separated emails allowed to provision customer organisations in-app.
+variable "platform_admin_emails" {
+  type    = string
+  default = ""
+}
+
 variable "alarm_email" {
   type    = string
   default = "mac@aequilibri.com"
