@@ -15,6 +15,15 @@ variable "github_repo" {
   default = ""
 }
 
+# GitHub issues this repo an ID-hardened OIDC subject
+# (repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:...). When set, the trust
+# policy pins this exact subject (stronger: survives repo-name-reuse attacks;
+# needs updating if the repo is ever renamed). Empty = classic format.
+variable "github_oidc_sub" {
+  type    = string
+  default = ""
+}
+
 # 0 until the first image is in ECR (nothing to run yet); flip to 1 after
 # the first push/deploy. The scheduler lock & caches are per-process —
 # NEVER set this above 1 without a shared Redis (hardening audit pin).
@@ -36,6 +45,14 @@ variable "app_image_tag" {
 variable "migrate_image_tag" {
   type    = string
   default = "migrate"
+}
+
+# Clerk publishable key — public by design (shipped in every client bundle),
+# so a plain variable, not a secret. Server code also reads it at runtime to
+# decide whether Clerk is enabled.
+variable "clerk_publishable_key" {
+  type    = string
+  default = ""
 }
 
 variable "alarm_email" {

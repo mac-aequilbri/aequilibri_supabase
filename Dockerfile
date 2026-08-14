@@ -25,6 +25,10 @@ RUN npm ci
 FROM deps AS build
 WORKDIR /app
 COPY . .
+# Clerk publishable key is public by design but must be present at build:
+# Next inlines NEXT_PUBLIC_* into the client bundle.
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=""
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 # Build-time placeholders only — the boot guard warns (not throws) and no
 # page connects at build; real values come from Secrets Manager at runtime.
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build" \

@@ -50,7 +50,8 @@ resource "aws_ecs_task_definition" "app" {
         { name = "NODE_ENV", value = "production" },
         { name = "PORT", value = "3000" },
         { name = "DOCUMENTS_BUCKET", value = aws_s3_bucket.app["documents"].bucket },
-        { name = "AWS_REGION", value = var.aws_region }
+        { name = "AWS_REGION", value = var.aws_region },
+        { name = "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", value = var.clerk_publishable_key }
       ]
       secrets = local.app_secrets
       logConfiguration = {

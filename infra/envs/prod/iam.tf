@@ -123,7 +123,7 @@ data "aws_iam_policy_document" "ci_assume" {
       # Branch-pinned: only workflows on main of THIS repo can assume it.
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/main"]
+      values   = [var.github_oidc_sub != "" ? var.github_oidc_sub : "repo:${var.github_repo}:ref:refs/heads/main"]
     }
   }
 }
