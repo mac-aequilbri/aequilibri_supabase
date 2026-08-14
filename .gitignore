@@ -54,3 +54,13 @@ prisma/*.db-wal
 
 # local analysis / reverse-engineering scratch output (not repo material)
 /outputs/
+
+# ops secrets (Supabase access token etc.) — never commit
+.env.ops
+
+# terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
