@@ -4,12 +4,26 @@
 // This is the step UC2/UC3 never had: tagged chat outputs become real
 // database rows.
 
-import { db, prisma } from "@/lib/db";
+import { db } from "@/lib/db";
 import type { ToolUse } from "@/lib/claude";
-import { writeRecord, WritableTable, type RecordId } from "@/lib/platform/recordWriter";
+import {
+  requiredCreateFields,
+  writableFields,
+  writeRecord,
+  WritableTable,
+  type RecordId,
+} from "@/lib/platform/recordWriter";
 import { Actor, AiAuthority, OrgCtx } from "@/lib/platform/types";
 import { currentJobScope, resolveJobScope } from "@/lib/platform/rls";
-import { roleCanQueryTable, roleCanUseTool, type ToolPolicy } from "./tools";
+import {
+  PROPOSABLE_KEYS,
+  resolveTable,
+  TABLE_KEYS,
+  tableCatalog,
+  tableFields,
+  WRITER_TABLE,
+} from "./dataCatalog";
+import { roleCanProposeOn, roleCanQueryTable, roleCanUseTool, type ToolPolicy } from "./tools";
 
 /** An explicitly-identified viewer for RLS scoping and operator gating. When
  *  omitted, the request's Clerk viewer is resolved via currentJobScope /
@@ -41,34 +55,96 @@ export function requiresApproval(authority: AiAuthority, risk: string): boolean 
   return true; // propose_only / approve_required
 }
 
-const QUERYABLE = {
-  jobs: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platJob, select: { id: true, code: true, name: true, engagementType: true, status: true, completionPct: true, budgetTotal: true } }),
-  actions: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platActionHub, select: { id: true, jobId: true, title: true, priority: true, status: true, owner: true, dueDate: true } }),
-  decisions: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platDecision, select: { id: true, jobId: true, description: true, status: true, madeBy: true, category: true } }),
-  phases: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platConPhase, select: { id: true, jobId: true, name: true, status: true, completionPct: true, sortOrder: true, isAiDraft: true } }),
-  budget_lines: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platConBudgetLine, select: { id: true, jobId: true, phaseId: true, category: true, description: true, budgetAmount: true, committedAmount: true, actualAmount: true } }),
-  // Legacy shape — cashflow writes are Airtable-only (Spec 12 ledger); this
-  // Postgres read only surfaces pre-migration/seeded rows.
-  cashflows: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platConCashflow, select: { id: true, jobId: true, period: true, projected: true, actual: true } }),
-  risks: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platConRisk, select: { id: true, jobId: true, description: true, likelihood: true, impact: true, status: true, owner: true } }),
-  variations: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platConVariationOrder, select: { id: true, jobId: true, refNumber: true, title: true, costImpact: true, timeImpactDays: true, status: true } }),
-  procurement: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platConProcurement, select: { id: true, jobId: true, item: true, vendorName: true, total: true, status: true, dueDate: true } }),
-  vendors: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platConVendor, select: { id: true, name: true, category: true, rating: true, isActive: true } }),
-  learning_rules: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platLearningRule, select: { id: true, ruleCode: true, kind: true, description: true, confidence: true, isActive: true } }),
-  documents: (ctx: OrgCtx) =>
-    ({ model: db(ctx).platDocument, select: { id: true, jobId: true, title: true, docType: true, status: true, uploadedBy: true, version: true } }),
-} as const;
+// ── Reads ────────────────────────────────────────────────────────────────────
+// The read surface mirrors an Airtable MCP server (see dataCatalog.ts for why):
+// every migrated table, every column, free-text search, arbitrary field
+// filters, sorting and paging — with the row total always reported so a capped
+// read is visibly capped instead of passing for the whole set.
+
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+/** Columns the tenancy and RLS predicates are built from — never overridable
+ *  by a tool argument (mcp-assistant-plan §1: orgId must never be acceptable
+ *  as a tool parameter). */
+const SCOPE_FIELDS = new Set(["orgId", "jobId", "id"]);
+/** Long text (document bodies, raw minutes) is clipped per field so one wide
+ *  row can't crowd out the rest of the answer. The clip is announced inline. */
+const MAX_TEXT = 2000;
+
+/** Round-trips Prisma scalars to JSON the model reads cleanly: BigInt →
+ *  number, Date → ISO date, Decimal → number, long strings clipped. */
+function jsonReplacer(_key: string, value: unknown): unknown {
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string" && value.length > MAX_TEXT) {
+    return `${value.slice(0, MAX_TEXT)}… [clipped, ${value.length} chars total — use get_record for the full value]`;
+  }
+  return value;
+}
+
+function serialize(payload: unknown): string {
+  return JSON.stringify(payload, jsonReplacer);
+}
+
+/** Turn the model's `filters` argument into `where` clauses, dropping anything
+ *  that isn't a real column of the table — and, critically, anything that would
+ *  overwrite the tenancy/RLS predicates. A model-supplied `filters.orgId` or
+ *  `filters.jobId` landing in `where` would step straight out of the tenant or
+ *  the viewer's job scope (mcp-assistant-plan §1: orgId must never be
+ *  acceptable as a tool parameter). Rejected names are reported back so the
+ *  model corrects the call instead of silently reading unfiltered rows.
+ *  Exported for the tenancy test — this is a security boundary, not a detail. */
+export function buildFilters(
+  table: string,
+  raw: unknown,
+): { accepted: Record<string, unknown>; rejected: string[] } {
+  const accepted: Record<string, unknown> = {};
+  const rejected: string[] = [];
+  const t = resolveTable(table);
+  if (!t || !raw || typeof raw !== "object" || Array.isArray(raw)) return { accepted, rejected };
+  for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (SCOPE_FIELDS.has(field) || !t.fieldNames.has(field)) {
+      rejected.push(field);
+      continue;
+    }
+    accepted[field] = value === null ? null : value;
+  }
+  return { accepted, rejected };
+}
+
+/** The org + RLS `where` every read starts from. `jobs` scopes on its own id;
+ *  job-scoped tables on jobId; org-global tables aren't job-filtered at all. */
+async function scopeWhere(
+  ctx: OrgCtx,
+  table: string,
+  jobScoped: boolean,
+  input: Record<string, unknown>,
+  viewer?: ScopedViewer,
+): Promise<Record<string, unknown>> {
+  const where: Record<string, unknown> = { orgId: ctx.orgId };
+  // The tool schema accepts a number or a string id (Airtable "rec…" ids
+  // predate the migration); a numeric string must still filter, or the read
+  // silently widens to every job in scope.
+  const asked = input.jobId;
+  const jobId =
+    typeof asked === "number"
+      ? asked
+      : typeof asked === "string" && asked.trim() !== "" && Number.isFinite(Number(asked))
+        ? Number(asked)
+        : undefined;
+  if (jobId !== undefined && jobScoped) where.jobId = jobId;
+
+  // RLS: constrain to the viewer's assigned jobs. No-op for whole-tenant viewers.
+  const pgScope = viewer ? await resolveJobScope(ctx, viewer) : await currentJobScope(ctx);
+  if (pgScope.mode !== "all") {
+    const ids =
+      pgScope.mode === "some"
+        ? [...pgScope.jobIds].map(Number).filter((n) => Number.isFinite(n))
+        : [-1];
+    if (table === "jobs") where.id = { in: ids };
+    else if (jobScoped) where.jobId = { in: jobId !== undefined ? ids.filter((i) => i === jobId) : ids };
+  }
+  return where;
+}
 
 async function runQuery(
   ctx: OrgCtx,
@@ -76,24 +152,129 @@ async function runQuery(
   viewer?: ScopedViewer,
 ): Promise<string> {
   const table = String(input.table ?? "");
-  const def = QUERYABLE[table as keyof typeof QUERYABLE];
-  if (!def) return `Unknown table "${table}".`;
-  const { model, select } = def(ctx);
-  const where: Record<string, unknown> = { orgId: ctx.orgId };
-  const jobScoped = table !== "jobs" && table !== "vendors" && table !== "learning_rules";
-  if (typeof input.jobId === "number" && jobScoped) where.jobId = input.jobId;
-  // RLS: constrain to the viewer's assigned jobs. No-op for whole-tenant viewers.
-  const pgScope = viewer ? await resolveJobScope(ctx, viewer) : await currentJobScope(ctx);
-  if (pgScope.mode !== "all") {
-    const ids = pgScope.mode === "some" ? [...pgScope.jobIds].map(Number).filter((n) => Number.isFinite(n)) : [-1];
-    if (table === "jobs") where.id = { in: ids };
-    else if (jobScoped) where.jobId = { in: ids };
+  const t = resolveTable(table);
+  if (!t) {
+    return `Unknown table "${table}". Readable tables: ${TABLE_KEYS.join(", ")}. Call describe_data for what each one holds.`;
   }
-  if (typeof input.status === "string" && input.status) where.status = input.status;
-  const limit = Math.min(Math.max(Number(input.limit) || 20, 1), 50);
+  const where = await scopeWhere(ctx, table, t.def.jobScoped, input, viewer);
+
+  // `status` stays a first-class shortcut (it was the original filter and is
+  // by far the most common one); everything else goes through `filters`.
+  if (typeof input.status === "string" && input.status && t.fieldNames.has("status")) {
+    where.status = input.status;
+  }
+
+  const { accepted, rejected } = buildFilters(table, input.filters);
+  Object.assign(where, accepted);
+
+  // Free-text search across the table's text columns — the `search_records`
+  // equivalent. Without it, anything the user refers to by wording rather than
+  // by id is unfindable.
+  const search = typeof input.search === "string" ? input.search.trim() : "";
+  if (search && t.searchable.length) {
+    where.OR = t.searchable.map((f) => ({ [f]: { contains: search, mode: "insensitive" } }));
+  }
+
+  const limit = Math.min(Math.max(Number(input.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const offset = Math.max(Number(input.offset) || 0, 0);
+
+  const sortField =
+    typeof input.sortBy === "string" && t.fieldNames.has(input.sortBy) ? input.sortBy : "id";
+  const sortDir = input.sortDirection === "asc" ? "asc" : "desc";
+
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-  const rows = await (model as any).findMany({ where, select, take: limit, orderBy: { id: "desc" } });
-  return JSON.stringify(rows, (_k, v) => (typeof v === "bigint" ? Number(v) : v));
+  const model = (db(ctx) as any)[t.def.model];
+  const [total, rows] = await Promise.all([
+    model.count({ where }),
+    model.findMany({ where, take: limit, skip: offset, orderBy: { [sortField]: sortDir } }),
+  ]);
+
+  const returned = rows.length;
+  const truncated = offset + returned < total;
+  return serialize({
+    table,
+    total,
+    returned,
+    offset,
+    // Stated explicitly on every read: a model that can't tell a capped page
+    // from the whole table will answer "how many…" from the page.
+    truncated,
+    ...(truncated
+      ? {
+          note: `Showing ${returned} of ${total} matching rows. Re-query with offset=${offset + returned} for the next page, or raise limit (max ${MAX_LIMIT}). Do not state totals or run calculations from this page alone — ${total} is the true match count.`,
+        }
+      : {}),
+    ...(rejected.length ? { ignoredFilters: rejected } : {}),
+    rows,
+  });
+}
+
+/** Schema discovery — the `list_tables` / `describe_table` equivalent. With no
+ *  table argument it lists the surface; with one it returns that table's
+ *  columns and its row count in the viewer's scope. */
+async function runDescribe(
+  ctx: OrgCtx,
+  input: Record<string, unknown>,
+  currentUserRole?: string,
+  viewer?: ScopedViewer,
+): Promise<string> {
+  const table = typeof input.table === "string" ? input.table.trim() : "";
+  if (!table) {
+    const tables = tableCatalog().filter(
+      (t) => !currentUserRole || roleCanQueryTable(currentUserRole, t.table),
+    );
+    return serialize({ tables });
+  }
+  const t = resolveTable(table);
+  if (!t) return `Unknown table "${table}". Readable tables: ${TABLE_KEYS.join(", ")}.`;
+  if (currentUserRole && !roleCanQueryTable(currentUserRole, table)) {
+    return `Role "${currentUserRole}" does not have access to the "${table}" table.`;
+  }
+  const where = await scopeWhere(ctx, table, t.def.jobScoped, {}, viewer);
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const rowCount = await (db(ctx) as any)[t.def.model].count({ where });
+  // The proposal surface, straight off the zod schemas: exactly which fields a
+  // propose_create/propose_update may set. Without this the model has to guess
+  // field names and gets rejected, which reads to the user as "it can't do it".
+  const writer = WRITER_TABLE[table as keyof typeof WRITER_TABLE];
+  const proposable =
+    writer && (!currentUserRole || roleCanProposeOn(currentUserRole, writer, "update"))
+      ? {
+          create: writableFields(writer, "create"),
+          requiredOnCreate: requiredCreateFields(writer),
+          update: writableFields(writer, "update"),
+        }
+      : undefined;
+  return serialize({
+    table,
+    description: t.def.description,
+    jobScoped: t.def.jobScoped,
+    rowCount,
+    fields: tableFields(table),
+    ...(proposable ? { proposable } : { proposable: false }),
+  });
+}
+
+/** One row, every field, nothing clipped — the follow-up after a search or a
+ *  clipped list read. */
+async function runGetRecord(
+  ctx: OrgCtx,
+  input: Record<string, unknown>,
+  viewer?: ScopedViewer,
+): Promise<string> {
+  const table = String(input.table ?? "");
+  const t = resolveTable(table);
+  if (!t) return `Unknown table "${table}". Readable tables: ${TABLE_KEYS.join(", ")}.`;
+  const id = Number(input.recordId);
+  if (!Number.isFinite(id)) return `get_record needs a numeric recordId (got "${String(input.recordId)}").`;
+  // `AND` rather than `where.id = id`: on `jobs` the RLS scope already put an
+  // `id: { in: … }` there, and overwriting it would step around the scope.
+  const where = await scopeWhere(ctx, table, t.def.jobScoped, {}, viewer);
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const row = await (db(ctx) as any)[t.def.model].findFirst({ where: { ...where, AND: [{ id }] } });
+  if (!row) return `No ${table} record ${id} is visible to you.`;
+  // No clipping here — this tool exists precisely to get the untruncated value.
+  return JSON.stringify(row, (_k, v) => (typeof v === "bigint" ? Number(v) : v));
 }
 
 /** Per-tool input massaging: stamp provenance flags, allocate rule codes. */
@@ -267,6 +448,111 @@ async function runServiceTool(
   }
 }
 
+/** Tables whose changes are always high-risk regardless of the op: money, and
+ *  the rules that steer the assistant itself. Matches the risk the
+ *  fixed-purpose tools already carried (update_budget_line, propose_rule). */
+const HIGH_RISK_TABLES = new Set([
+  "budget_line",
+  "cashflow",
+  "procurement",
+  "quote",
+  "quote_line",
+  "learning_rule",
+]);
+
+/** The generic proposal path (mcp-assistant-plan: the assistant proposes, a
+ *  human disposes). Table, op and fields all arrive as arguments, so every
+ *  gate the fixed-purpose tools got from their static policy is applied here
+ *  at execution time instead: the per-table role matrix, the read gate, the
+ *  risk class, and finally the same recordWriter + aiAuthority approval path.
+ *  Nothing here can write a record that the approval queue would not. */
+async function runProposal(
+  ctx: OrgCtx,
+  actor: Actor,
+  toolName: string,
+  policy: ToolPolicy,
+  input: Record<string, unknown>,
+  currentUserRole?: string,
+): Promise<ToolOutcome> {
+  const key = String(input.table ?? "");
+  const table = WRITER_TABLE[key as keyof typeof WRITER_TABLE];
+  if (!table) {
+    return {
+      toolName,
+      ok: false,
+      summary: `"${key}" cannot be changed. Proposable tables: ${PROPOSABLE_KEYS.join(", ")}.`,
+    };
+  }
+  const op = (policy.op ?? "update") as "create" | "update" | "delete";
+
+  if (currentUserRole) {
+    if (!roleCanQueryTable(currentUserRole, key)) {
+      return { toolName, ok: false, summary: `Role "${currentUserRole}" has no access to "${key}".` };
+    }
+    if (!roleCanProposeOn(currentUserRole, table, op)) {
+      return {
+        toolName,
+        ok: false,
+        summary: `Role "${currentUserRole}" may not propose a ${op} on "${key}". Answer without doing it and say who can.`,
+      };
+    }
+  }
+
+  const risk = HIGH_RISK_TABLES.has(table) ? "high_write" : policy.risk;
+  const rationale = typeof input.proposalReason === "string" ? input.proposalReason : undefined;
+
+  // Reject unknown field names up front with the real list — a zod failure
+  // deep in recordWriter tells the model far less than this does.
+  let data: Record<string, unknown> = {};
+  if (op !== "delete") {
+    const raw = input.fields;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { toolName, ok: false, summary: `${toolName} needs a "fields" object.` };
+    }
+    const settable = new Set(writableFields(table, op === "create" ? "create" : "update"));
+    const unknown = Object.keys(raw as Record<string, unknown>).filter((f) => !settable.has(f));
+    if (unknown.length) {
+      return {
+        toolName,
+        ok: false,
+        summary: `Unknown field(s) on "${key}": ${unknown.join(", ")}. Settable fields are: ${[...settable].join(", ")}. Call describe_data for types.`,
+      };
+    }
+    data = raw as Record<string, unknown>;
+    if (op === "create") {
+      const missing = requiredCreateFields(table).filter((f) => data[f] === undefined);
+      if (missing.length) {
+        return { toolName, ok: false, summary: `"${key}" needs: ${missing.join(", ")}.` };
+      }
+    }
+  }
+
+  const recordId = op === "create" ? undefined : (input.recordId as RecordId | undefined);
+  if (op !== "create" && recordId == null) {
+    return { toolName, ok: false, summary: `${toolName} needs a recordId.` };
+  }
+
+  try {
+    const result = await writeRecord(ctx, {
+      table,
+      op,
+      recordId,
+      data,
+      actor,
+      requireApproval: requiresApproval(ctx.aiAuthority, risk),
+      rationale,
+    });
+    const summary =
+      result.status === "proposed"
+        ? `Proposal #${result.proposalId} recorded — a human must approve before the ${op} on ${key} is applied. Tell the user it is pending approval.`
+        : `${op} on ${key} executed (record id ${result.recordId}).`;
+    return { toolName, ok: true, summary, status: result.status, proposalId: result.proposalId, recordId: result.recordId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { toolName, ok: false, summary: `Proposal rejected: ${message.slice(0, 400)}` };
+  }
+}
+
 export async function executeToolUse(
   ctx: OrgCtx,
   actor: Actor,
@@ -280,10 +566,16 @@ export async function executeToolUse(
     return { toolName: tu.name, ok: false, summary: `Unknown tool "${tu.name}".` };
   }
   if (currentUserRole && !roleCanUseTool(currentUserRole, tu.name, toolPolicy)) {
+    // Name the tool rather than declaring the role read-only: a builder or
+    // architect CAN propose plenty, just not this, and "you are read-only" sent
+    // the model off to tell the user it could do nothing at all.
     return {
       toolName: tu.name,
       ok: false,
-      summary: `Role "${currentUserRole}" is read-only for assistant writes. This request can be answered, but no records will be created or updated.`,
+      summary:
+        tu.name === "propose_delete"
+          ? `Role "${currentUserRole}" may not propose a delete — deletion is owner-only. Suggest a status change instead, or tell the user an owner must do it.`
+          : `Role "${currentUserRole}" may not use "${tu.name}". Answer the request without it and say which role can, rather than implying the data cannot be changed at all.`,
     };
   }
   const input = (tu.input ?? {}) as Record<string, unknown>;
@@ -294,12 +586,19 @@ export async function executeToolUse(
   if (policy.kind === "service") {
     return runServiceTool(ctx, actor, tu.name, input, viewer);
   }
+  // Generic proposals resolve their table (and therefore their role gate and
+  // risk class) from the arguments, so they run before the static-table path.
+  if (policy.kind === "propose") {
+    return runProposal(ctx, actor, tu.name, policy, input, currentUserRole);
+  }
 
   if (policy.risk === "read") {
     // Spec 12 role-scoped context: financial and restricted tables are not
-    // readable below the Owner role, even via the generic query tool.
+    // readable below the Owner role, even via the generic read tools.
+    // describe_data self-filters (it lists only permitted tables), so it is
+    // gated inside its own handler rather than here.
     if (
-      tu.name === "query_records" &&
+      (tu.name === "query_records" || tu.name === "get_record") &&
       currentUserRole &&
       !roleCanQueryTable(currentUserRole, String(input.table ?? ""))
     ) {
@@ -310,7 +609,13 @@ export async function executeToolUse(
       };
     }
     try {
-      return { toolName: tu.name, ok: true, summary: await runQuery(ctx, input, viewer) };
+      const summary =
+        tu.name === "describe_data"
+          ? await runDescribe(ctx, input, currentUserRole, viewer)
+          : tu.name === "get_record"
+            ? await runGetRecord(ctx, input, viewer)
+            : await runQuery(ctx, input, viewer);
+      return { toolName: tu.name, ok: true, summary };
     } catch (err) {
       return { toolName: tu.name, ok: false, summary: `Query failed: ${err}` };
     }

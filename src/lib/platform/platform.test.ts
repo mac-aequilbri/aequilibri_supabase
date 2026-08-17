@@ -177,12 +177,18 @@ describe("prompt assembler", () => {
       persona: "You are Didi.",
       orgName: "Dulong Downs",
       jobLine: " on job DD-001",
+      today: "2026-08-17",
+      tables: "jobs, actions, cashflows",
       rulesBlock: "CRITICAL RULES:\n- rule one",
     });
     expect(system).toContain("You are Didi.");
     expect(system).toContain("Dulong Downs");
     expect(system).toContain("rule one");
-    expect(version).toBe("assistant.chat@1.0");
+    // The assistant must know the date and its own readable surface, or every
+    // "overdue" answer is a guess and every unknown table is "not available".
+    expect(system).toContain("Today is 2026-08-17");
+    expect(system).toContain("cashflows");
+    expect(version).toBe("assistant.chat@1.2");
   });
   it("throws on unknown template", () => {
     expect(() => getPrompt("nope")).toThrow();
@@ -192,7 +198,10 @@ describe("prompt assembler", () => {
 describe("model router", () => {
   it("routes tasks to tiers", () => {
     expect(modelFor("classification")).toContain("haiku");
-    expect(modelFor("chat")).toContain("sonnet");
+    expect(modelFor("drafting")).toContain("sonnet");
+    // Chat is the assistant's answering tier — it runs on Opus so a client
+    // comparing us against their own Claude session is comparing like for like.
+    expect(modelFor("chat")).toContain("opus");
     expect(modelFor("complex_reasoning")).toContain("opus");
   });
 });

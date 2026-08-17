@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { WRITABLE_TABLES } from "@/lib/platform/recordWriter";
 import { requiresApproval } from "./executor";
+import { WRITER_TABLE } from "./dataCatalog";
 import { ASSISTANT_TOOLS, roleCanQueryTable, roleCanUseTool, TOOL_POLICY } from "./tools";
 
 describe("aiAuthority policy matrix", () => {
@@ -39,14 +40,31 @@ describe("tool policy registry consistency", () => {
     }
   });
 
-  it("every write tool maps to a registered writable table", () => {
+  it("every fixed-table write tool maps to a registered writable table", () => {
     for (const [name, policy] of Object.entries(TOOL_POLICY)) {
       if (policy.risk === "read") continue;
       if (policy.kind === "service") continue; // service tools call a service, not recordWriter
+      if (policy.kind === "propose") continue; // table is a runtime argument — checked below
       expect(policy.table, `${name} has no table`).toBeDefined();
       expect(WRITABLE_TABLES, `${name} → unknown table ${policy.table}`).toContain(policy.table);
       expect(["create", "update"]).toContain(policy.op);
     }
+  });
+
+  it("every proposable table resolves to a registered writable table", () => {
+    // The generic tools take the table as an argument, so the guarantee moves
+    // from the policy to the catalog→recordWriter map.
+    for (const [key, table] of Object.entries(WRITER_TABLE)) {
+      expect(WRITABLE_TABLES, `${key} → unknown table ${table}`).toContain(table);
+    }
+    for (const [name, policy] of Object.entries(TOOL_POLICY)) {
+      if (policy.kind !== "propose") continue;
+      expect(["create", "update", "delete"], name).toContain(policy.op);
+    }
+  });
+
+  it("deletion is always high-risk, so it is gated under every authority", () => {
+    expect(TOOL_POLICY.propose_delete.risk).toBe("high_write");
   });
 
   it("rule proposals are always high-risk (prompt-injection reach)", () => {

@@ -20,7 +20,13 @@ import { executeToolViaMcp } from "@/services/platform/mcp/client";
 import type { McpSession } from "@/services/platform/mcp/session";
 import type { AgentDefinition, AgentViewer, DelegationContext, Specialist } from "./types";
 
-export const MAX_TOOL_ROUNDS = 4;
+// Enough rounds to discover a table, read it, page it and follow up on one
+// record — the shape a grounded answer actually takes. At 4 the loop ran out
+// mid-investigation and the model answered from what it had.
+export const MAX_TOOL_ROUNDS = 8;
+/** Per-call output ceiling. 1500 truncated real answers mid-sentence; this is
+ *  the SDK's recommended non-streaming default. */
+export const AGENT_MAX_TOKENS = 16000;
 /** The orchestrator delegates at depth 1; a specialist may delegate once more
  *  (depth 2), then delegation stops — bounds inter-agent recursion. */
 export const MAX_AGENT_DELEGATION_DEPTH = 2;
@@ -94,7 +100,7 @@ export async function runAgentLoop(
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const res = await callClaudeConversation(system, convo, {
       tools,
-      maxTokens: 1500,
+      maxTokens: AGENT_MAX_TOKENS,
       model: modelFor(agent.modelTask),
       onEvent,
     });

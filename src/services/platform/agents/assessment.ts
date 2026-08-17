@@ -6,7 +6,7 @@
 import { policyByName, toolsByName } from "@/services/platform/assistant/tools";
 import type { AgentDefinition } from "./types";
 
-const TOOLS = ["query_records", "run_construction_intake"] as const;
+const TOOLS = ["query_records", "describe_data", "get_record", "run_construction_intake"] as const;
 
 export const assessmentAgent: AgentDefinition = {
   key: "assessment",

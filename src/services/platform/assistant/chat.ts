@@ -9,12 +9,50 @@ import type { RecordId } from "@/lib/platform/recordWriter";
 import { domainVocabBlock } from "@/lib/platform/domainLabels";
 import { learningPromptText } from "../learning";
 import { jobContextBlock } from "./context";
+import { catalogPromptLine } from "./dataCatalog";
 import type { ToolOutcome } from "./executor";
 import { runOrchestrator, type Specialist } from "../agents/orchestrator";
 import { SPECIALISTS } from "../agents/registry";
 import { currentJobScope } from "@/lib/platform/rls";
 
 const HISTORY_LIMIT = 20;
+
+/** How many recent assistant turns replay the data their tools returned.
+ *  Persisting only the final prose meant every follow-up question ("and the
+ *  other supplier?") started from nothing and had to re-read — or, worse, was
+ *  answered from the model's memory of a summary. */
+const REPLAY_TOOL_DATA_TURNS = 3;
+/** Per-turn ceiling on replayed tool output. */
+const REPLAY_TOOL_DATA_CHARS = 6000;
+
+interface PersistedToolCall {
+  tool?: string;
+  result?: string;
+}
+
+/** Rebuild an assistant turn's retrieved data from its persisted tool trace,
+ *  as a plainly-labelled appendix the model can read but the UI never renders
+ *  (the trace lives in `toolCalls`, not in the displayed `content`). */
+function retrievedDataBlock(toolCalls: string): string {
+  if (!toolCalls) return "";
+  let parsed: PersistedToolCall[];
+  try {
+    parsed = JSON.parse(toolCalls) as PersistedToolCall[];
+  } catch {
+    return "";
+  }
+  const withData = (Array.isArray(parsed) ? parsed : []).filter((c) => c?.result);
+  if (!withData.length) return "";
+  let budget = REPLAY_TOOL_DATA_CHARS;
+  const parts: string[] = [];
+  for (const c of withData) {
+    if (budget <= 0) break;
+    const body = c.result!.slice(0, budget);
+    budget -= body.length;
+    parts.push(`${c.tool}: ${body}`);
+  }
+  return `\n\n[Data you retrieved on this turn — reuse it instead of re-reading:\n${parts.join("\n")}]`;
+}
 
 interface ChatMessageRow {
   id: RecordId;
@@ -175,35 +213,60 @@ export async function listMessages(ctx: OrgCtx, sessionId: RecordId): Promise<Ch
 
 /** Compact data context so the model grounds its answers in real records —
  *  RLS-scoped, so a scoped viewer's assistant is grounded only on their jobs
- *  (and org-global rows), never the whole org's projects/counts. */
+ *  (and org-global rows), never the whole org's projects/counts.
+ *
+ *  The row-count map is the important half: it is what a Claude session
+ *  connected to Airtable gets for free from `list_tables`. Without it the model
+ *  has no idea a table has 274 rows rather than 4, so it neither pages nor
+ *  hedges — it just answers from whatever the first read returned. */
 async function dataContext(ctx: OrgCtx): Promise<string> {
   const scope = await currentJobScope(ctx);
   const ids = scope.mode === "some" ? [...scope.jobIds].map(Number).filter((n) => Number.isFinite(n)) : null;
   const jobW = ids ? { jobId: { in: ids } } : scope.mode === "none" ? { jobId: -1 } : {};
   const ownW = ids ? { id: { in: ids } } : scope.mode === "none" ? { id: -1 } : {};
-  const jobs = await db(ctx).platJob.findMany({
-    where: { orgId: ctx.orgId, ...ownW },
-    select: {
-      id: true,
-      code: true,
-      name: true,
-      engagementType: true,
-      status: true,
-      completionPct: true,
-      budgetTotal: true,
-    },
-    take: 10,
-    orderBy: { updatedAt: "desc" },
-  });
-  const [openActions, pendingProposals] = await Promise.all([
-    db(ctx).platActionHub.count({
-      where: { orgId: ctx.orgId, ...jobW, status: { in: ["open", "in_progress"] } },
+  const org = { orgId: ctx.orgId };
+  const d = db(ctx);
+
+  const [jobs, counts, openActions, pendingProposals] = await Promise.all([
+    d.platJob.findMany({
+      where: { ...org, ...ownW },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        engagementType: true,
+        status: true,
+        completionPct: true,
+        budgetTotal: true,
+      },
+      take: 25,
+      orderBy: { updatedAt: "desc" },
     }),
-    db(ctx).platPendingWrite.count({ where: { orgId: ctx.orgId, ...jobW, status: "proposed" } }),
+    // One count per table the assistant is most often asked about. Cheap
+    // indexed counts; the full surface is discoverable via describe_data.
+    Promise.all([
+      d.platActionHub.count({ where: { ...org, ...jobW } }).then((n) => ["actions", n] as const),
+      d.platDecision.count({ where: { ...org, ...jobW } }).then((n) => ["decisions", n] as const),
+      d.platConPhase.count({ where: { ...org, ...jobW } }).then((n) => ["phases", n] as const),
+      d.platConPlanTask.count({ where: { ...org, ...jobW } }).then((n) => ["plan", n] as const),
+      d.platConBudgetLine.count({ where: { ...org, ...jobW } }).then((n) => ["budget_lines", n] as const),
+      d.platConCashflowLedger.count({ where: { ...org, ...jobW } }).then((n) => ["cashflows", n] as const),
+      d.platConProcurement.count({ where: { ...org, ...jobW } }).then((n) => ["procurement", n] as const),
+      d.platConRisk.count({ where: { ...org, ...jobW } }).then((n) => ["risks", n] as const),
+      d.platDocument.count({ where: { ...org, ...jobW } }).then((n) => ["documents", n] as const),
+      d.platConRoomMatrix.count({ where: { ...org, ...jobW } }).then((n) => ["rooms", n] as const),
+      d.platConVendor.count({ where: org }).then((n) => ["vendors", n] as const),
+      d.platContact.count({ where: org }).then((n) => ["contacts", n] as const),
+    ]),
+    d.platActionHub.count({ where: { ...org, ...jobW, status: { in: ["open", "in_progress"] } } }),
+    d.platPendingWrite.count({ where: { ...org, ...jobW, status: "proposed" } }),
   ]);
+
   return [
-    `Jobs: ${JSON.stringify(jobs, (_k, v) => (typeof v === "bigint" ? Number(v) : v))}`,
+    `Jobs (${jobs.length}): ${JSON.stringify(jobs, (_k, v) => (typeof v === "bigint" ? Number(v) : v))}`,
+    `Row counts in your scope: ${JSON.stringify(Object.fromEntries(counts))}`,
     `Open actions: ${openActions}. Pending write proposals awaiting human approval: ${pendingProposals}.`,
+    `These counts are the truth about how much data exists. If a read returns fewer rows than the count above, you are looking at a page — page through it before summarising.`,
   ].join("\n");
 }
 
@@ -257,6 +320,10 @@ export async function sendChatMessage(
   const { system, version } = getPrompt("assistant.chat", {
     persona: ctx.config.assistant.persona,
     orgName: ctx.orgName,
+    // Without this the assistant has no idea what "today" is, so every
+    // "overdue" / "this week" / "due soon" answer is a guess.
+    today: new Date().toISOString().slice(0, 10),
+    tables: catalogPromptLine(),
     jobLine: opts.jobId ? ` (current job id ${opts.jobId})` : "",
     rulesBlock: [
       rulesBlock,
@@ -270,11 +337,19 @@ export async function sendChatMessage(
       .join("\n\n"),
   });
 
+  const replayable = historyRows
+    .reverse()
+    .filter((m) => m.role === "user" || m.role === "assistant");
+  // Only the most recent turns carry their retrieved data forward — enough for
+  // "and what about the other one?" to resolve, bounded so a long thread of
+  // large reads can't crowd out the system prompt.
+  const carryFrom = Math.max(0, replayable.length - REPLAY_TOOL_DATA_TURNS * 2);
   const convo: Anthropic.MessageParam[] = [
-    ...historyRows
-      .reverse()
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content || "…" })),
+    ...replayable.map((m, i) => ({
+      role: m.role as "user" | "assistant",
+      content:
+        (m.content || "…") + (i >= carryFrom ? retrievedDataBlock(m.toolCalls) : ""),
+    })),
     { role: "user", content: text },
   ];
 
@@ -323,15 +398,25 @@ export async function sendChatMessage(
 
   // Trace: prepend a "delegated" marker per specialist the orchestrator routed
   // to, then the executed/proposed tool calls. Empty in single-specialist mode.
+  // The returned rows ride along so the next turn can reason about them (see
+  // retrievedDataBlock) instead of re-reading or answering from memory. Shared
+  // budget across the turn's calls so a wide read can't bloat the row; the UI
+  // reads only `tool`/`ok`/`status` and ignores `result`.
+  let traceBudget = REPLAY_TOOL_DATA_CHARS;
   const toolTrace = [
     ...delegations.map((d) => ({ tool: `→ ${d.label}`, ok: true, status: "delegated" as const })),
-    ...outcomes.map((o) => ({
-      tool: o.toolName,
-      ok: o.ok,
-      status: o.status,
-      proposalId: o.proposalId,
-      recordId: o.recordId,
-    })),
+    ...outcomes.map((o) => {
+      const result = o.ok && traceBudget > 0 ? o.summary.slice(0, traceBudget) : undefined;
+      if (result) traceBudget -= result.length;
+      return {
+        tool: o.toolName,
+        ok: o.ok,
+        status: o.status,
+        proposalId: o.proposalId,
+        recordId: o.recordId,
+        result,
+      };
+    }),
   ];
 
   await db(ctx).platChatMessage.create({
