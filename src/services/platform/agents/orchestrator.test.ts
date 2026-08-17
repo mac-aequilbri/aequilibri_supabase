@@ -68,11 +68,14 @@ describe("specialist registry + delegate tool", () => {
     expect(props.agent.enum).toEqual(SPECIALISTS.map((a) => a.key));
   });
 
-  it("partitions write tools across agents with no overlap (query_records shared)", () => {
+  it("partitions write tools across agents with no overlap (read tools shared)", () => {
+    // Every specialist gets the whole read surface — discovery, query, single
+    // record. Only write tools are partitioned.
+    const shared = new Set(["query_records", "describe_data", "get_record"]);
     const writeOwners = new Map<string, string[]>();
     for (const agent of SPECIALISTS) {
       for (const name of Object.keys(agent.toolPolicy)) {
-        if (name === "query_records") continue;
+        if (shared.has(name)) continue;
         writeOwners.set(name, [...(writeOwners.get(name) ?? []), agent.key]);
       }
     }

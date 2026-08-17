@@ -561,6 +561,35 @@ export function validateRecord(
   return validated(REGISTRY[table], op, data);
 }
 
+/** The field names a create/update may set on a table, read straight off the
+ *  zod schema so it can never drift from what `validated` accepts.
+ *
+ *  This is what lets the assistant propose the same field set a Claude session
+ *  over the Airtable base could write: the tool advertises the real column
+ *  list instead of a hand-picked handful, and `describe_data` shows it. Pure
+ *  introspection — no write path, no behaviour change. */
+export function writableFields(table: WritableTable, op: "create" | "update"): string[] {
+  const def = REGISTRY[table];
+  if (!def) return [];
+  const schema = op === "create" ? def.create : def.update;
+  const shape = (schema as { shape?: Record<string, unknown> }).shape;
+  return shape ? Object.keys(shape) : [];
+}
+
+/** Required (non-optional, non-defaulted) create fields, so a proposal can be
+ *  rejected with a useful message before it reaches the approval queue. */
+export function requiredCreateFields(table: WritableTable): string[] {
+  const def = REGISTRY[table];
+  if (!def) return [];
+  const shape = (def.create as { shape?: Record<string, { safeParse?: (v: unknown) => { success: boolean } }> })
+    .shape;
+  if (!shape) return [];
+  // A field is required exactly when the schema rejects `undefined` for it.
+  return Object.entries(shape)
+    .filter(([, s]) => s?.safeParse && !s.safeParse(undefined).success)
+    .map(([k]) => k);
+}
+
 async function performWrite(
   ctx: OrgCtx,
   table: WritableTable,

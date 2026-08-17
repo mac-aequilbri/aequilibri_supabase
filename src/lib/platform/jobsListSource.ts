@@ -4,6 +4,7 @@
 
 import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
+import { excludeGeneral } from "./generalJob";
 import { resolveJobScope, scopeRows } from "./rls";
 import type { OrgCtx } from "./types";
 
@@ -29,7 +30,8 @@ export interface JobListView {
 
 async function fromPostgres(ctx: OrgCtx): Promise<JobListView[]> {
   const jobs = await db(ctx).platJob.findMany({
-    where: { orgId: ctx.orgId },
+    // The Organisation-wide bucket is not a project — it never appears here.
+    where: { orgId: ctx.orgId, ...excludeGeneral(ctx) },
     orderBy: { updatedAt: "desc" },
     include: { _count: { select: { conPhases: true, actions: true, conRisks: true } } },
   });

@@ -11,16 +11,20 @@ import type { ToolContract } from "@/lib/platform/toolContract";
 import type { WritableTable } from "@/lib/platform/recordWriter";
 import { normalizeTeamRole } from "@/lib/platform/module1Governance";
 import { financeVisible } from "@/lib/platform/roles";
+import { PROPOSABLE_KEYS, TABLE_KEYS } from "./dataCatalog";
 
 export interface ToolPolicy {
   table?: WritableTable;
-  op?: "create" | "update";
+  op?: "create" | "update" | "delete";
   risk: "read" | "low_write" | "high_write";
   /** "record" (default) → routed through recordWriter under the aiAuthority
-   *  gate. "service" → dispatched to a platform service that produces a
-   *  human-reviewable draft/suggestion (report, assessment, route hints); the
-   *  downstream lifecycle step (approve/materialise) is the human gate. */
-  kind?: "record" | "service";
+   *  gate, against the table fixed in this policy. "service" → dispatched to a
+   *  platform service that produces a human-reviewable draft/suggestion
+   *  (report, assessment, route hints); the downstream lifecycle step
+   *  (approve/materialise) is the human gate. "propose" → same recordWriter
+   *  path, but the table and fields come from the tool call, so the table gate
+   *  (roleCanProposeOn) and risk class are resolved at execution time. */
+  kind?: "record" | "service" | "propose";
 }
 
 // Spec 12 role-scoped write access (Module 7): Owner confirms anything;
@@ -35,6 +39,11 @@ const ROLE_WRITE_ALLOW: Record<string, ReadonlySet<string>> = {
     "log_workstream_update",
     "capture_source_note",
     "generate_weekly_report",
+    // The generic proposal tools pass the tool-name gate for every role that
+    // may propose anything; WHICH table they may touch is decided by
+    // roleCanProposeOn below, since the table is a runtime argument.
+    "propose_create",
+    "propose_update",
   ]),
   architect: new Set([
     "create_action",
@@ -43,9 +52,63 @@ const ROLE_WRITE_ALLOW: Record<string, ReadonlySet<string>> = {
     "capture_source_note",
     "create_variation_draft",
     "generate_weekly_report",
+    "propose_create",
+    "propose_update",
   ]),
-  broker: new Set(["create_action"]),
+  broker: new Set(["create_action", "propose_create"]),
 };
+
+// ── Which tables each role may propose changes to ────────────────────────────
+// The per-table half of the write gate. Owner is unrestricted; every other role
+// gets the same scope Spec 12 gave it through the old fixed-purpose tools, now
+// expressed once against recordWriter's table keys instead of being implied by
+// a tool name. Deletion is owner-only, always — see roleCanProposeOn.
+const BUILDER_TABLES = [
+  "action",
+  "plan",
+  "workstream",
+  "document",
+  "phase_evidence",
+  "meeting_minutes",
+  "weekly_report",
+] as const;
+const ARCHITECT_TABLES = [
+  ...BUILDER_TABLES,
+  "variation_order",
+  "phase",
+  "room",
+  "bim_model",
+] as const;
+
+const ROLE_TABLE_ALLOW: Record<string, ReadonlySet<string>> = {
+  builder: new Set<string>(BUILDER_TABLES),
+  architect: new Set<string>(ARCHITECT_TABLES),
+  broker: new Set<string>(["action"]),
+};
+
+/** recordWriter tables that carry money — unlocked for a Finance Manager /
+ *  Auditor sub-role the same way the financial READ tables are. */
+const FINANCIAL_WRITE = new Set(["budget_line", "cashflow", "procurement", "quote", "quote_line"]);
+
+/** May `role` propose `op` on recordWriter table `table`? */
+export function roleCanProposeOn(
+  role: string,
+  table: string,
+  op: "create" | "update" | "delete",
+): boolean {
+  const normalized = normalizeTeamRole(role);
+  if (normalized === "owner") return true;
+  // Deleting client records is owner-only regardless of table. A proposal is
+  // only a proposal, but a non-owner should not be able to put "delete the
+  // budget" in front of a reviewer as a one-click approval.
+  if (op === "delete") return false;
+  if (FINANCIAL_WRITE.has(table) && financeVisible(role)) return true;
+  const allowed = ROLE_TABLE_ALLOW[normalized]?.has(table) ?? false;
+  if (!allowed) return false;
+  // Broker is create-only (raising an issue), matching its read-only posture.
+  if (normalized === "broker" && op !== "create") return false;
+  return true;
+}
 
 export function roleCanUseTool(
   role: string,
@@ -60,13 +123,34 @@ export function roleCanUseTool(
   return ROLE_WRITE_ALLOW[normalized]?.has(toolName) ?? false;
 }
 
-// Spec 12 role-scoped read access: financial tables (BUDGET/CASHFLOWS) are
-// Owner-only; RISKS is hidden from Builder/Architect; LEARNING_RULES from all
-// non-owner roles; PROCUREMENT is financial detail the Architect doesn't get.
+// Spec 12 role-scoped read access: financial tables (BUDGET/CASHFLOWS/QUOTES)
+// are Owner-only; RISKS is hidden from Builder/Architect; the learning stores
+// (LEARNING_RULES/HYPOTHESES/CORRECTIONS) and org SETTINGS from all non-owner
+// roles; PROCUREMENT is financial detail the Architect doesn't get.
+//
+// Widening the readable surface to full Airtable parity means every newly
+// reachable table has to land in this matrix deliberately — a table that is
+// merely absent here is readable by everyone.
+const FINANCIAL = ["budget_lines", "cashflows", "procurement", "quotes", "quote_lines"] as const;
+const LEARNING = [
+  "learning_rules",
+  "hypotheses",
+  "corrections",
+  "intelligence_snapshot",
+  "settings",
+] as const;
+
 const ROLE_QUERY_DENY: Record<string, ReadonlySet<string>> = {
-  builder: new Set(["budget_lines", "cashflows", "risks", "learning_rules"]),
-  architect: new Set(["budget_lines", "cashflows", "procurement", "risks", "learning_rules"]),
-  broker: new Set(["budget_lines", "cashflows", "learning_rules"]),
+  builder: new Set<string>([
+    "budget_lines",
+    "cashflows",
+    "quotes",
+    "quote_lines",
+    "risks",
+    ...LEARNING,
+  ]),
+  architect: new Set<string>([...FINANCIAL, "risks", ...LEARNING]),
+  broker: new Set<string>(["budget_lines", "cashflows", "quotes", "quote_lines", ...LEARNING]),
 };
 
 export function roleCanQueryTable(role: string, table: string): boolean {
@@ -76,14 +160,20 @@ export function roleCanQueryTable(role: string, table: string): boolean {
   if (!denied) return true;
   // CLS (governance §3): Finance Manager / Auditor sub-roles unlock the
   // financial tables their base role would otherwise be denied.
-  if (table === "budget_lines" || table === "cashflows" || table === "procurement") {
-    return financeVisible(role);
-  }
+  if ((FINANCIAL as readonly string[]).includes(table)) return financeVisible(role);
   return false;
 }
 
 export const TOOL_POLICY: Record<string, ToolPolicy> = {
   query_records: { risk: "read" },
+  describe_data: { risk: "read" },
+  get_record: { risk: "read" },
+  // Generic proposal surface — any proposable table, any settable field. Risk
+  // is escalated per table at execution time (financial/learning → high_write).
+  propose_create: { risk: "low_write", kind: "propose", op: "create" },
+  propose_update: { risk: "low_write", kind: "propose", op: "update" },
+  // Deletion is always high-risk: gated even under auto_low_risk.
+  propose_delete: { risk: "high_write", kind: "propose", op: "delete" },
   capture_source_note: { table: "document", op: "create", risk: "low_write" },
   create_action: { table: "action", op: "create", risk: "low_write" },
   update_action: { table: "action", op: "update", risk: "low_write" },
@@ -129,34 +219,106 @@ const proposalReasonProp = {
 
 export const ASSISTANT_TOOLS: ToolContract[] = [
   {
-    name: "query_records",
+    name: "describe_data",
     description:
-      "Read project data. Returns matching rows as JSON. Use before proposing changes so values are grounded in the database.",
+      "Discover what data exists. With no arguments, lists every readable table and what it holds. With a table name, returns that table's exact field names and types plus its row count in your scope. Call this when you are unsure which table or field holds something, rather than guessing a name or telling the user the data is unavailable.",
     input_schema: {
       type: "object",
       properties: {
         table: {
           type: "string",
-          enum: [
-            "jobs",
-            "actions",
-            "decisions",
-            "phases",
-            "budget_lines",
-            "cashflows",
-            "risks",
-            "variations",
-            "procurement",
-            "vendors",
-            "learning_rules",
-            "documents",
-          ],
+          enum: [...TABLE_KEYS],
+          description: "Omit to list all tables; supply one to describe its fields.",
+        },
+      },
+    },
+  },
+  {
+    name: "query_records",
+    description:
+      "Read project data. Returns full rows as JSON along with `total` (how many rows actually match) and `truncated`. Supports free-text search, field filters, sorting and paging. Use it before proposing changes so values are grounded in the database. If `truncated` is true you are looking at one page — page through with `offset` before stating any total, count or sum.",
+    input_schema: {
+      type: "object",
+      properties: {
+        table: { type: "string", enum: [...TABLE_KEYS] },
+        search: {
+          type: "string",
+          description:
+            "Free-text match across the table's text fields (case-insensitive). Use this whenever the user refers to something by wording rather than by id.",
         },
         jobId: { ...jobIdProp.jobId, description: "Optional job id filter." },
         status: { type: "string", description: "Optional status filter." },
-        limit: { type: "number", description: "Max rows (default 20)." },
+        filters: {
+          type: "object",
+          description:
+            'Exact-match filters keyed by field name, e.g. {"priority":"P1","owner":"Jack"}. Field names must come from describe_data; unknown ones are ignored and reported back.',
+        },
+        sortBy: { type: "string", description: "Field to sort by (default: id)." },
+        sortDirection: { type: "string", enum: ["asc", "desc"], description: "Default desc." },
+        limit: { type: "number", description: "Rows per page (default 50, max 200)." },
+        offset: { type: "number", description: "Rows to skip — use with `total` to page." },
       },
       required: ["table"],
+    },
+  },
+  {
+    name: "get_record",
+    description:
+      "Fetch one record by id with every field untruncated. Use after query_records when a long field (document text, meeting minutes, notes) was clipped, or to confirm a record before proposing a change to it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        table: { type: "string", enum: [...TABLE_KEYS] },
+        recordId: { type: "number", description: "The record's numeric id." },
+      },
+      required: ["table", "recordId"],
+    },
+  },
+  {
+    name: "propose_create",
+    description:
+      "Propose creating a record in any table, setting any of its fields. Call describe_data first to get the exact field names for the table. This creates a proposal for human approval, not the record itself — say so when you report back. Prefer this over the fixed-purpose create tools when you need fields they do not expose.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ...proposalReasonProp,
+        table: { type: "string", enum: [...PROPOSABLE_KEYS] },
+        fields: {
+          type: "object",
+          description:
+            'The record\'s field values, e.g. {"jobId": 3, "title": "Order render", "priority": "P1"}. Field names must match describe_data exactly; unknown names are rejected with the list of valid ones.',
+        },
+      },
+      required: ["table", "fields"],
+    },
+  },
+  {
+    name: "propose_update",
+    description:
+      "Propose changing any fields of an existing record in any table. Only the fields you supply change. Read the record first (get_record) so the proposal is grounded in its current values. Creates a proposal for human approval, not the change itself.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ...proposalReasonProp,
+        table: { type: "string", enum: [...PROPOSABLE_KEYS] },
+        recordId: { type: "number", description: "The record's numeric id." },
+        fields: { type: "object", description: "Field values to change." },
+      },
+      required: ["table", "recordId", "fields"],
+    },
+  },
+  {
+    name: "propose_delete",
+    description:
+      "Propose deleting a record. ALWAYS requires human approval and is owner-only. Use sparingly — prefer proposing a status change (e.g. cancelled, superseded) over deletion, and say which you chose and why.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ...proposalReasonProp,
+        table: { type: "string", enum: [...PROPOSABLE_KEYS] },
+        recordId: { type: "number", description: "The record's numeric id." },
+      },
+      required: ["table", "recordId", "proposalReason"],
     },
   },
   {

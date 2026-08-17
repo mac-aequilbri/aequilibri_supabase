@@ -4,6 +4,7 @@
 // dashboardSource exactly so the numbers match the org dashboard.
 
 import { db, prisma } from "@/lib/db";
+import { excludeGeneral } from "./generalJob";
 import { type JobScope } from "./rls";
 import type { OrgCtx } from "./types";
 
@@ -23,7 +24,8 @@ async function fromPostgres(ctx: OrgCtx, scope?: JobScope): Promise<OrgHighlight
   const ownW = ids ? { id: { in: ids } } : scope && scope.mode === "none" ? { id: -1 } : {};
   const [projects, openActions, overdueActions, pendingApprovals, openRisks, openVariations] =
     await Promise.all([
-      db(ctx).platJob.count({ where: { orgId: ctx.orgId, ...ownW } }),
+      // The Organisation-wide bucket is not a project — never counted as one.
+      db(ctx).platJob.count({ where: { orgId: ctx.orgId, ...ownW, ...excludeGeneral(ctx) } }),
       db(ctx).platActionHub.count({ where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, ...jobW } }),
       db(ctx).platActionHub.count({
         where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, dueDate: { lt: new Date() }, ...jobW },

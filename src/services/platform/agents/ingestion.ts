@@ -7,7 +7,7 @@
 import { policyByName, toolsByName } from "@/services/platform/assistant/tools";
 import type { AgentDefinition } from "./types";
 
-const TOOLS = ["query_records", "suggest_ingestion_routes"] as const;
+const TOOLS = ["query_records", "describe_data", "get_record", "suggest_ingestion_routes"] as const;
 
 export const ingestionAgent: AgentDefinition = {
   key: "ingestion",

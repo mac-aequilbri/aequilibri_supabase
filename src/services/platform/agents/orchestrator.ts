@@ -18,7 +18,7 @@ import { modelFor } from "@/lib/platform/modelRouter";
 import { getPrompt } from "@/lib/platform/prompts";
 import { Actor, OrgCtx } from "@/lib/platform/types";
 import type { ToolOutcome } from "@/services/platform/assistant/executor";
-import { MAX_AGENT_DELEGATION_DEPTH, buildDelegateTool, runAgentLoop } from "./loop";
+import { AGENT_MAX_TOKENS, MAX_AGENT_DELEGATION_DEPTH, buildDelegateTool, runAgentLoop } from "./loop";
 import type { AgentViewer, DelegationContext, Specialist } from "./types";
 
 export type { Specialist } from "./types";
@@ -100,11 +100,14 @@ export async function runOrchestrator(
   for (let round = 0; round <= MAX_DELEGATION_ROUNDS; round++) {
     const res = await callClaudeConversation(system, oconvo, {
       tools: [delegateTool],
-      maxTokens: 1500,
-      // The coordinator only routes (delegate tool) and stitches specialist
-      // replies together — a classification/routing job, not domain reasoning.
-      // Run it on the cheaper/faster tier; specialists stay on the chat model.
-      model: modelFor("classification"),
+      maxTokens: AGENT_MAX_TOKENS,
+      // The coordinator does not only route: when it delegates more than once,
+      // or writes any prose of its own, ITS output is the reply the user reads.
+      // Running that on the classification tier meant the cheapest model in the
+      // stack wrote the final answer — the single biggest quality gap against a
+      // direct Claude session. Routing is cheap either way; the synthesis is
+      // not, so the coordinator shares the specialists' tier.
+      model: modelFor("chat"),
       onEvent,
     });
     demoMode = res.demo_mode;
