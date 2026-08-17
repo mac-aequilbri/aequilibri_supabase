@@ -4,6 +4,7 @@
 import type { OrgMetricsSnapshot } from "@/lib/platform/controlPlane";
 import { db, prisma } from "@/lib/db";
 import { logger, errMeta } from "@/lib/logger";
+import { excludeGeneral } from "./generalJob";
 import { loadOrgHighlights } from "./orgHighlightsSource";
 import { currentJobScope } from "./rls";
 import type { OrgCtx } from "./types";
@@ -36,7 +37,10 @@ function toCounts(m: OrgMetricsSnapshot): NavCounts {
 
 async function fromPostgres(ctx: OrgCtx, f: Record<string, boolean>): Promise<NavCounts> {
   const [jobs, pending, openActions, openRisks, openVariations] = await Promise.all([
-    db(ctx).platJob.count({ where: { orgId: ctx.orgId } }),
+    // Excludes the Organisation-wide bucket: this count drives both the nav
+    // badge and nav.ts's `multiJob` switch, so counting it would give a
+    // single-project org a projects list it should never see.
+    db(ctx).platJob.count({ where: { orgId: ctx.orgId, ...excludeGeneral(ctx) } }),
     db(ctx).platPendingWrite.count({ where: { orgId: ctx.orgId, status: "proposed" } }),
     db(ctx).platActionHub.count({
       where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] } },
