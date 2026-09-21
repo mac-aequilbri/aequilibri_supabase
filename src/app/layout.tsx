@@ -24,6 +24,14 @@ export const metadata: Metadata = {
   description: "æquilibri — AI-assisted operations platform",
 };
 
+// Never prerender: this layout's tree SHAPE depends on clerkEnabled(), and the
+// Docker build has no CLERK_SECRET_KEY — a build-time render bakes a
+// ClerkProvider-less shell (in demo mode) that client navigation then mixes
+// with runtime-rendered segments containing Clerk components, crashing their
+// hooks ("useSession can only be used within <ClerkProvider>"). Rendering
+// per-request keeps every segment on the same runtime env.
+export const dynamic = "force-dynamic";
+
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
