@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { GoogleSignInButton } from "@/components/GoogleSignInButton";
 import { browserSupabase } from "@/lib/platform/supabaseBrowser";
 
 // Only same-origin paths may be used as a post-sign-in target — a full URL
@@ -49,6 +50,12 @@ export function SignInForm({ redirectUrl }: { redirectUrl: string }) {
       <div>
         <h1 className="text-xl font-semibold">Sign in to æquilibri</h1>
         <p className="text-sm text-neutral-500 mt-1">Welcome back — please sign in to continue.</p>
+      </div>
+      <GoogleSignInButton next={safePath(redirectUrl)} />
+      <div className="flex items-center gap-3 text-xs text-neutral-400">
+        <span className="h-px flex-1 bg-neutral-200" />
+        or
+        <span className="h-px flex-1 bg-neutral-200" />
       </div>
       <label className="block text-sm">
         <span className="text-neutral-700">Email address</span>

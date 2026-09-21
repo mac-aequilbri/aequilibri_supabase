@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { GoogleSignInButton } from "@/components/GoogleSignInButton";
 import { browserSupabase } from "@/lib/platform/supabaseBrowser";
 
 export function SignUpForm() {
@@ -50,6 +51,12 @@ export function SignUpForm() {
         <p className="text-sm text-neutral-500 mt-1">
           Access to an organisation is granted by its administrator after sign-up.
         </p>
+      </div>
+      <GoogleSignInButton next="/app" />
+      <div className="flex items-center gap-3 text-xs text-neutral-400">
+        <span className="h-px flex-1 bg-neutral-200" />
+        or
+        <span className="h-px flex-1 bg-neutral-200" />
       </div>
       <label className="block text-sm">
         <span className="text-neutral-700">Email address</span>
