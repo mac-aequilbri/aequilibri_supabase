@@ -2,6 +2,55 @@ resource "aws_sns_topic" "alarms" {
   name = "${var.name_prefix}-alarms"
 }
 
+# Explicit topic policy: keep the default same-account access AND let
+# EventBridge publish (needed for the GuardDuty findings rule; CloudWatch
+# alarms publish via the account statement).
+data "aws_iam_policy_document" "alarms_topic" {
+  statement {
+    sid = "DefaultAccountAccess"
+    actions = [
+      "SNS:Publish",
+      "SNS:Subscribe",
+      "SNS:GetTopicAttributes",
+      "SNS:SetTopicAttributes",
+      "SNS:ListSubscriptionsByTopic",
+      "SNS:AddPermission",
+      "SNS:RemovePermission",
+      "SNS:DeleteTopic",
+      "SNS:Receive"
+    ]
+    resources = [aws_sns_topic.alarms.arn]
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceOwner"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+  statement {
+    sid       = "AllowEventBridgePublish"
+    actions   = ["SNS:Publish"]
+    resources = [aws_sns_topic.alarms.arn]
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "alarms" {
+  arn    = aws_sns_topic.alarms.arn
+  policy = data.aws_iam_policy_document.alarms_topic.json
+}
+
 resource "aws_sns_topic_subscription" "alarm_email" {
   topic_arn = aws_sns_topic.alarms.arn
   protocol  = "email"

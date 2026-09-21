@@ -7,7 +7,7 @@ import { logger, errMeta } from "@/lib/logger";
 import type { ToolContract } from "@/lib/platform/toolContract";
 
 // Env-overridable so a model rollover is a config change, not a deploy.
-const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-opus-4-7"; // matches the Django client
+const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-opus-5";
 
 function getApiKey(): string {
   return process.env.ANTHROPIC_API_KEY ?? "";

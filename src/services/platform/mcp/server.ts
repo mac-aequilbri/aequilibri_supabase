@@ -29,7 +29,13 @@ import type { McpSession } from "./session";
 export const MCP_TOOL_NAMES = [
   // reads
   "query_records",
+  "describe_data",
+  "get_record",
   "suggest_ingestion_routes",
+  // generic proposals — any proposable table/field, same approval gate
+  "propose_create",
+  "propose_update",
+  "propose_delete",
   // record writes — routed through recordWriter under aiAuthority
   "capture_source_note",
   "create_action",

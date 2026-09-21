@@ -9,6 +9,11 @@ import type { AgentDefinition } from "./types";
 
 const TOOLS = [
   "query_records",
+  "describe_data",
+  "get_record",
+  "propose_create",
+  "propose_update",
+  "propose_delete",
   "create_action",
   "update_action",
   "save_decision",

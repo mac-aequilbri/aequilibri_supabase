@@ -6,7 +6,7 @@
 import { policyByName, toolsByName } from "@/services/platform/assistant/tools";
 import type { AgentDefinition } from "./types";
 
-const TOOLS = ["query_records", "propose_rule"] as const;
+const TOOLS = ["query_records", "describe_data", "get_record", "propose_rule"] as const;
 
 export const learningLoopAgent: AgentDefinition = {
   key: "learning_loop",

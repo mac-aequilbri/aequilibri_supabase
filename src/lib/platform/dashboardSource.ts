@@ -2,6 +2,7 @@
 
 import { db, prisma } from "@/lib/db";
 import { toNum } from "@/lib/format";
+import { excludeGeneral } from "./generalJob";
 import { currentJobScope } from "./rls";
 import type { OrgCtx } from "./types";
 
@@ -56,7 +57,12 @@ async function fromPostgres(ctx: OrgCtx): Promise<DashboardView> {
   const ownW = ids ? { id: { in: ids } } : scope.mode === "none" ? { id: -1 } : {};
   const [jobs, openActions, overdueActions, pendingProposals, budgetAgg, recentLogs, activeRules] =
     await Promise.all([
-      db(ctx).platJob.findMany({ where: { orgId: ctx.orgId, ...ownW }, orderBy: { updatedAt: "desc" }, take: 6 }),
+      db(ctx).platJob.findMany({
+        // Recent PROJECTS — the Organisation-wide bucket is not one.
+        where: { orgId: ctx.orgId, ...ownW, ...excludeGeneral(ctx) },
+        orderBy: { updatedAt: "desc" },
+        take: 6,
+      }),
       db(ctx).platActionHub.count({ where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, ...jobW } }),
       db(ctx).platActionHub.count({
         where: { orgId: ctx.orgId, status: { in: ["open", "in_progress"] }, dueDate: { lt: new Date() }, ...jobW },

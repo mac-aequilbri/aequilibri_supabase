@@ -4,6 +4,7 @@
 // new record to its job.
 
 import { db, prisma } from "@/lib/db";
+import { GENERAL_LABEL, isGeneralJob } from "./generalJob";
 import { currentJobScope, inScope } from "./rls";
 import type { OrgCtx } from "./types";
 
@@ -16,10 +17,22 @@ export interface JobOption {
 async function fromPostgres(ctx: OrgCtx): Promise<JobOption[]> {
   const jobs = await db(ctx).platJob.findMany({
     where: { orgId: ctx.orgId },
-    select: { id: true, code: true, name: true },
+    select: { id: true, code: true, name: true, engagementType: true },
     orderBy: { code: "asc" },
   });
-  return jobs.map((j) => ({ id: String(j.id), label: `${j.code} — ${j.name}` }));
+  // The Organisation-wide bucket stays selectable — filing an org-level record
+  // is a real choice — but it is not a project: it carries its own label rather
+  // than "CODE — Name", and is pinned above the projects instead of sorted in
+  // among them.
+  const options = jobs.map((j) => ({
+    id: String(j.id),
+    label: isGeneralJob(ctx, j) ? GENERAL_LABEL : `${j.code} — ${j.name}`,
+    general: isGeneralJob(ctx, j),
+  }));
+  return [
+    ...options.filter((o) => o.general).map(({ id, label }) => ({ id, label })),
+    ...options.filter((o) => !o.general).map(({ id, label }) => ({ id, label })),
+  ];
 }
 
 /** Load the job-picker options — RLS-scoped to the viewer's assigned jobs

@@ -9,3 +9,6 @@ app_desired_count = 1
 clerk_publishable_key = "pk_test_ZnJhbmstZG9yeS0yOC5jbGVyay5hY2NvdW50cy5kZXYk"
 
 platform_admin_emails = "mac@aequilibri.com"
+
+# NS delegation went live 2026-08-17 (Claudia added the records at Squarespace).
+enable_https = true

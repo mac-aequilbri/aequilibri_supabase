@@ -9,7 +9,7 @@
 import { policyByName, toolsByName } from "@/services/platform/assistant/tools";
 import type { AgentDefinition } from "./types";
 
-const TOOLS = ["query_records", "onboarding_status"] as const;
+const TOOLS = ["query_records", "describe_data", "get_record", "onboarding_status"] as const;
 
 export const onboardingAgent: AgentDefinition = {
   key: "onboarding",

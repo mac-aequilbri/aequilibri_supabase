@@ -371,7 +371,10 @@ describe("W3: writes through the approval gate", () => {
     const session = await sessionFor(SLUG_A, KEY_A_BROKER);
     const res = await call(session, "save_decision", { description: "broker overreach" });
     expect(res.result?.isError).toBe(true);
-    expect(res.result!.content[0].text).toMatch(/read-only for assistant writes/i);
+    // The refusal names the tool rather than declaring the role read-only: a
+    // broker can still raise an action, and "you are read-only" led the model
+    // to tell the user nothing at all could be changed.
+    expect(res.result!.content[0].text).toMatch(/may not use "save_decision"/i);
   });
 
   it("cross-org writes are refused: org A cannot update org B's action", async () => {
