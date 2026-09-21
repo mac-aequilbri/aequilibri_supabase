@@ -31,6 +31,13 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
   }
 }
 
+resource "aws_s3_bucket_versioning" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
   bucket = aws_s3_bucket.cloudtrail.id
   rule {
@@ -67,6 +74,21 @@ data "aws_iam_policy_document" "cloudtrail_bucket" {
       values   = ["bucket-owner-full-control"]
     }
   }
+  statement {
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.cloudtrail.arn, "${aws_s3_bucket.cloudtrail.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "cloudtrail" {
@@ -86,6 +108,23 @@ resource "aws_cloudtrail" "main" {
 # --- GuardDuty + Security Hub ------------------------------------------------
 resource "aws_guardduty_detector" "main" {
   enable = true
+}
+
+# GuardDuty detects but does not notify by itself: route medium+ findings
+# (severity >= 4) to the alarms topic so a compromise actually pages someone.
+resource "aws_cloudwatch_event_rule" "guardduty_findings" {
+  name        = "${var.name_prefix}-guardduty-findings"
+  description = "GuardDuty findings, severity >= 4 (medium and above)"
+  event_pattern = jsonencode({
+    source        = ["aws.guardduty"]
+    "detail-type" = ["GuardDuty Finding"]
+    detail        = { severity = [{ numeric = [">=", 4] }] }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "guardduty_findings" {
+  rule = aws_cloudwatch_event_rule.guardduty_findings.name
+  arn  = aws_sns_topic.alarms.arn
 }
 
 resource "aws_securityhub_account" "main" {}
@@ -134,6 +173,21 @@ data "aws_iam_policy_document" "config_bucket" {
       test     = "StringEquals"
       variable = "s3:x-amz-acl"
       values   = ["bucket-owner-full-control"]
+    }
+  }
+  statement {
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.config.arn, "${aws_s3_bucket.config.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
     }
   }
 }

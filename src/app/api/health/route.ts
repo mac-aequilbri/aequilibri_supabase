@@ -11,7 +11,7 @@
 
 import { NextResponse } from "next/server";
 import { controlDb, prisma } from "@/lib/db";
-import { clerkEnabled, clerkMisconfigured, demoModeAllowed } from "@/lib/platform/authConfig";
+import { authEnabled, authMisconfigured, demoModeAllowed } from "@/lib/platform/authConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +42,7 @@ export async function GET(): Promise<NextResponse> {
   const checks: Record<string, CheckState> = {
     // Auth: either Clerk fully configured or demo mode explicitly allowed;
     // a half-configured Clerk is a deployment mistake.
-    auth_config: clerkMisconfigured() ? "fail" : clerkEnabled() || demoModeAllowed() ? "ok" : "fail",
+    auth_config: authMisconfigured() ? "fail" : authEnabled() || demoModeAllowed() ? "ok" : "fail",
     db_control: dbControl,
     db_tenant_default: dbTenant,
   };

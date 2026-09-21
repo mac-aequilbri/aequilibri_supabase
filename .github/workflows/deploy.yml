@@ -83,9 +83,11 @@ jobs:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPO: ${{ vars.ECR_REPOSITORY }}
         run: |
-          docker build --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
+          docker build --build-arg NEXT_PUBLIC_SUPABASE_URL="${{ vars.NEXT_PUBLIC_SUPABASE_URL }}" \
+            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" \
             --target runner  -t "$REGISTRY/$REPO:${{ github.sha }}" -t "$REGISTRY/$REPO:latest" .
-          docker build --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
+          docker build --build-arg NEXT_PUBLIC_SUPABASE_URL="${{ vars.NEXT_PUBLIC_SUPABASE_URL }}" \
+            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" \
             --target migrate -t "$REGISTRY/$REPO:migrate-${{ github.sha }}" -t "$REGISTRY/$REPO:migrate" .
           docker push --all-tags "$REGISTRY/$REPO"
       - name: Run release migrations (one-off ECS task, fail-fast)

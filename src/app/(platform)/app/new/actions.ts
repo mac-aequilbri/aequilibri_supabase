@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { getTemplateRegistryEntry } from "@/lib/platform/controlPlane";
-import { clerkEnabled } from "@/lib/platform/authConfig";
+import { authEnabled } from "@/lib/platform/authConfig";
 import { normalizeTeamRole, type TeamRole } from "@/lib/platform/module1Governance";
 import { AiAuthority, DEFAULT_FEATURES, EngagementType } from "@/lib/platform/types";
 import { provisionOrganisation } from "@/services/platform/onboarding";
@@ -54,15 +54,14 @@ export async function provisionOrgAction(formData: FormData): Promise<void> {
     logoDataUrl = `data:${logo.type};base64,${base64}`;
   }
 
-  // With Clerk active, default the first team member to the signing-in user so the
+  // With auth active, default the first team member to the signing-in user so the
   // creator is a member of (and can access) the org they just provisioned.
   let adminName = String(formData.get("adminName") ?? "");
   let adminEmail = String(formData.get("adminEmail") ?? "");
-  if (clerkEnabled() && !adminEmail.trim()) {
-    const { currentUser } = await import("@clerk/nextjs/server");
-    const user = await currentUser();
-    adminEmail = user?.primaryEmailAddress?.emailAddress ?? "";
-    adminName = adminName.trim() || user?.fullName || adminEmail.split("@")[0] || "Admin";
+  if (authEnabled() && !adminEmail.trim()) {
+    const { getAuthEmail } = await import("@/lib/platform/org-context");
+    adminEmail = (await getAuthEmail()) ?? "";
+    adminName = adminName.trim() || adminEmail.split("@")[0] || "Admin";
   }
 
   // Resolve the selected industry option. A registry record id resolves to its

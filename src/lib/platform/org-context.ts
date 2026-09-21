@@ -2,18 +2,18 @@
 // (/app/[org]/...), so the context is derived from the slug — no cookie.
 // Portal routes bypass this entirely and validate PlatConPortalToken instead.
 //
-// Authentication: when Clerk is configured (lib/platform/authConfig), the
-// signed-in user's email must match an active PlatCfgTeamMember of the org —
+// Authentication: when Supabase Auth is configured (lib/platform/authConfig),
+// the signed-in user's email must match an active team member of the org —
 // view access for any role, writes for owner/builder/architect only. Without
-// Clerk the platform runs in open demo mode (highest-privilege member acts as
+// auth the platform runs in open demo mode (highest-privilege member acts as
 // the current user).
 //
 // The request-free core (registry → OrgCtx, email → member) lives in
 // lib/platform/principal (MCP plan W1b); this module adds the page-flavored
-// behavior on top: Clerk identity lookup and redirect-on-denied.
+// behavior on top: session identity lookup and redirect-on-denied.
 
 import { redirect } from "next/navigation";
-import { clerkEnabled, platformAdminEmails } from "./authConfig";
+import { authEnabled, platformAdminEmails } from "./authConfig";
 import { reportingCapabilities } from "./reportingPolicy";
 import { isAdminRole, isWriteRole } from "./module1Governance";
 import {
@@ -26,12 +26,11 @@ import { OrgCtx } from "./types";
 
 export type { CurrentUser } from "./principal";
 
-/** Signed-in user's primary email via Clerk, or null in demo mode. */
+/** Signed-in user's email via Supabase Auth, or null in demo mode. */
 export async function getAuthEmail(): Promise<string | null> {
-  if (!clerkEnabled()) return null;
-  const { currentUser } = await import("@clerk/nextjs/server");
-  const user = await currentUser();
-  return user?.primaryEmailAddress?.emailAddress?.toLowerCase() ?? null;
+  if (!authEnabled()) return null;
+  const { serverAuthEmail } = await import("./supabaseServer");
+  return serverAuthEmail();
 }
 
 export async function getOrgCtx(orgSlug: string): Promise<OrgCtx | null> {
@@ -39,7 +38,7 @@ export async function getOrgCtx(orgSlug: string): Promise<OrgCtx | null> {
 }
 
 /** Resolve the org or bounce to the org picker. First line of every platform
- *  page/action. With Clerk active, the user must also be an active member. */
+ *  page/action. With auth active, the user must also be an active member. */
 export async function requireOrgCtx(orgSlug: string): Promise<OrgCtx> {
   const ctx = await getOrgCtx(orgSlug);
   if (!ctx) redirect("/app");
@@ -64,7 +63,7 @@ export async function getCurrentViewer(ctx: OrgCtx): Promise<CurrentUser> {
 }
 
 /** Current user for actor stamping. Called on every mutation path, so with
- *  Clerk active it doubles as the write gate: non-members are bounced and
+ *  auth active it doubles as the write gate: non-members are bounced and
  *  broker/read-only members cannot mutate. Demo mode returns the highest
  *  privilege active member. */
 export async function getCurrentUser(ctx: OrgCtx): Promise<CurrentUser> {
@@ -90,7 +89,7 @@ export async function requireFinancialAccess(ctx: OrgCtx): Promise<CurrentUser> 
 /** Admin-only gate for destructive/config operations. */
 export async function requireAdmin(ctx: OrgCtx): Promise<CurrentUser> {
   const user = await getCurrentUser(ctx);
-  if (clerkEnabled() && !isAdminRole(user.role)) {
+  if (authEnabled() && !isAdminRole(user.role)) {
     throw new Error("This operation requires the admin role.");
   }
   return user;
@@ -101,7 +100,7 @@ export async function requireAdmin(ctx: OrgCtx): Promise<CurrentUser> {
  *  do. Demo mode is open by definition; with auth on, the user's email must
  *  be in PLATFORM_ADMIN_EMAILS. */
 export async function isPlatformAdmin(): Promise<boolean> {
-  if (!clerkEnabled()) return true; // demo mode (already gated fail-closed by the proxy)
+  if (!authEnabled()) return true; // demo mode (already gated fail-closed by the proxy)
   const email = await getAuthEmail();
   return !!email && platformAdminEmails().includes(email);
 }

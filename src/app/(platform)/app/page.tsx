@@ -1,6 +1,6 @@
 // Organisation picker — entry point of the platform routes. Tenancy is
 // carried in the URL from here on (/app/[org]/...), not in a cookie.
-// With Clerk active, only organisations the signed-in user belongs to are
+// With auth active, only organisations the signed-in user belongs to are
 // listed; demo mode shows everything.
 
 import Link from "next/link";

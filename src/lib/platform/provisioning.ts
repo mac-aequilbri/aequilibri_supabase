@@ -1,18 +1,18 @@
 // User provisioning — the login/invitation half of the governance framework's
-// access-control model (the framework's §2.3/§7 define the Clerk role mapping
+// access-control model (the framework's §2.3/§7 define the auth role mapping
 // but not how users get accounts; this module fills that gap).
 //
 // Design: the control plane's team registry (control-base PLAT_TEAM, or
 // PlatCtlTeamMember in Postgres mode — see lib/platform/controlPlane) is the
-// authoritative membership + role store; Clerk authenticates identity only.
+// authoritative membership + role store; Supabase Auth authenticates identity only.
 // Inviting a user means
-// creating their member row (org-context matches the signed-in Clerk email
-// against it) and, when Clerk is active, sending a Clerk invitation email so
-// they can create an account. A user who already has a Clerk account gains
+// creating their member row (org-context matches the signed-in email
+// against it) and, when auth is active, sending an invitation email so
+// they can create an account. A user who already has an account gains
 // access the moment the row exists — no email needed.
 //
 // Deactivation is the reverse: Is_Active=false makes findMember miss, which
-// revokes access within the control-cache TTL (60s). The Clerk account is left
+// revokes access within the control-cache TTL (60s). The auth account is left
 // alone — it authenticates identity, membership is what authorizes.
 
 import {
@@ -22,14 +22,14 @@ import {
   type ControlTeamMember,
 } from "@/lib/platform/controlPlane";
 import { logger, errMeta } from "@/lib/logger";
-import { clerkEnabled } from "./authConfig";
+import { authEnabled } from "./authConfig";
 // Composite-aware ("builder+finance") — sub-roles survive storage; owner
 // checks compare the parsed BASE role so "owner+business_owner" still counts.
 import { normalizeRoleString as normalizeTeamRole, parseRole } from "./roles";
 import type { OrgCtx } from "./types";
 
 export type InviteStatus =
-  | "invited" // member row created + Clerk invitation email sent
+  | "invited" // member row created + auth invitation email sent
   | "added" // member row created; no email (demo mode, or they already have an account)
   | "reactivated" // an inactive row for this email existed — reactivated with the new role
   | "already_member"; // an active row already exists — nothing done
@@ -68,22 +68,24 @@ async function patchMember(
   return updateControlTeamMember(ctx.orgSlug, email, patch);
 }
 
-/** Send a Clerk invitation email. Best-effort: an email that already has a
- *  Clerk account (or a pending invitation) is not an error — the member row
- *  is what grants access. */
-async function sendClerkInvitation(email: string): Promise<"invited" | "skipped"> {
-  if (!clerkEnabled()) return "skipped";
+/** Send a Supabase Auth invitation email. Best-effort: an email that already
+ *  has an account (or a pending invitation) is not an error — the member row
+ *  is what grants access. Requires the service-role admin client; without it
+ *  (no SUPABASE_SERVICE_ROLE_KEY) members are added silently, same as demo. */
+async function sendAuthInvitation(email: string): Promise<"invited" | "skipped"> {
+  if (!authEnabled()) return "skipped";
   try {
-    const { clerkClient } = await import("@clerk/nextjs/server");
-    const client = await clerkClient();
-    await client.invitations.createInvitation({
-      emailAddress: email,
-      notify: true,
-      ignoreExisting: true,
+    const { adminSupabase } = await import("./supabaseServer");
+    const admin = adminSupabase();
+    if (!admin) return "skipped";
+    const site = process.env.NEXT_PUBLIC_APP_URL || "https://app.aequilibri.com";
+    const { error } = await admin.auth.admin.inviteUserByEmail(email, {
+      redirectTo: `${site}/auth/confirm?next=/reset-password`,
     });
+    if (error) throw error;
     return "invited";
   } catch (err) {
-    logger.warn("Clerk invitation not sent (existing account/invitation?)", {
+    logger.warn("Auth invitation not sent (existing account/invitation?)", {
       email,
       ...errMeta(err),
     });
@@ -92,7 +94,7 @@ async function sendClerkInvitation(email: string): Promise<"invited" | "skipped"
 }
 
 /** Invite a user to the org: create (or reactivate) their member row and send
- *  a Clerk invitation email when auth is active. */
+ *  an auth invitation email when auth is active. */
 export async function inviteMember(ctx: OrgCtx, input: InviteInput): Promise<InviteStatus> {
   const email = input.email.trim();
   const name = input.name.trim();
@@ -103,12 +105,12 @@ export async function inviteMember(ctx: OrgCtx, input: InviteInput): Promise<Inv
   if (existing?.isActive) return "already_member";
   if (existing) {
     await patchMember(ctx, email, { isActive: true, role });
-    const sent = await sendClerkInvitation(email);
+    const sent = await sendAuthInvitation(email);
     return sent === "invited" ? "invited" : "reactivated";
   }
 
   await createControlTeamMember(ctx.orgSlug, { name, email, role });
-  const sent = await sendClerkInvitation(email);
+  const sent = await sendAuthInvitation(email);
   return sent === "invited" ? "invited" : "added";
 }
 

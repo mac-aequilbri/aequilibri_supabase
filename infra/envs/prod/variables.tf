@@ -50,7 +50,21 @@ variable "migrate_image_tag" {
 # Clerk publishable key — public by design (shipped in every client bundle),
 # so a plain variable, not a secret. Server code also reads it at runtime to
 # decide whether Clerk is enabled.
+# TRANSITION: kept while the last Clerk-built image can still be deployed;
+# remove with the Clerk cleanup pass (auth-supabase-migration-plan B-auth-5).
 variable "clerk_publishable_key" {
+  type    = string
+  default = ""
+}
+
+# Supabase Auth (control project) — URL + anon key are public by design
+# (shipped in every client bundle); the service-role key is NOT (Secrets
+# Manager only, see secrets.tf).
+variable "supabase_url" {
+  type    = string
+  default = ""
+}
+variable "supabase_anon_key" {
   type    = string
   default = ""
 }

@@ -1,7 +1,7 @@
 // Team & access management (governance framework: Authentication & User
 // Provisioning). Owner-gated. Members listed here are the org's authoritative
-// access list: with Clerk active a user signs in and is matched by email;
-// inviting sends a Clerk invitation email; deactivating revokes access.
+// access list: with auth active a user signs in and is matched by email;
+// inviting sends an auth invitation email; deactivating revokes access.
 
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmSubmitButton } from "@/components/form/ConfirmSubmitButton";
@@ -10,7 +10,7 @@ import { buttonClass } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { MessageBar, type MessageVariant } from "@/components/ui/MessageBar";
 import { controlPlaneEnabled, listControlAssignments } from "@/lib/platform/controlPlane";
-import { clerkEnabled } from "@/lib/platform/authConfig";
+import { authEnabled } from "@/lib/platform/authConfig";
 import { loadJobOptions } from "@/lib/platform/jobOptionsSource";
 import { requireAdmin, requireOrgCtx } from "@/lib/platform/org-context";
 import { listMembers } from "@/lib/platform/provisioning";
@@ -83,7 +83,7 @@ export default async function TeamPage({
   const members = (await listMembers(ctx)).sort(
     (a, b) => Number(b.isActive) - Number(a.isActive) || rolePriority(a.role) - rolePriority(b.role) || a.name.localeCompare(b.name),
   );
-  const authOn = clerkEnabled();
+  const authOn = authEnabled();
 
   // Project (job) assignments = the RLS access list, from the control plane
   // (PLAT_ASSIGNMENTS on Airtable, PlatCtlAssignment on Postgres).
@@ -312,7 +312,7 @@ export default async function TeamPage({
         </table>
         <p className="text-xs text-neutral-500 mt-3">
           Membership here is the source of truth for access: a user signs in with their email
-          (via Clerk) and must match an active member of this organisation. Deactivating a member
+          and must match an active member of this organisation. Deactivating a member
           revokes access without deleting their sign-in account. Every organisation must keep at
           least one active owner.
         </p>

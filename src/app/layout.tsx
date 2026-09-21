@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import Link from "next/link";
-import { ClerkProvider, Show, UserButton } from "@clerk/nextjs";
-import { clerkEnabled } from "@/lib/platform/authConfig";
-import { isPlatformAdmin } from "@/lib/platform/org-context";
+import { UserMenu } from "@/components/UserMenu";
+import { authEnabled } from "@/lib/platform/authConfig";
+import { getAuthEmail, isPlatformAdmin } from "@/lib/platform/org-context";
 import "./globals.css";
 
 // Vendored from @fontsource/montserrat 5.3.0 (latin subset). next/font/google
@@ -24,23 +24,23 @@ export const metadata: Metadata = {
   description: "æquilibri — AI-assisted operations platform",
 };
 
-// Never prerender: this layout's tree SHAPE depends on clerkEnabled(), and the
-// Docker build has no CLERK_SECRET_KEY — a build-time render bakes a
-// ClerkProvider-less shell (in demo mode) that client navigation then mixes
-// with runtime-rendered segments containing Clerk components, crashing their
-// hooks ("useSession can only be used within <ClerkProvider>"). Rendering
-// per-request keeps every segment on the same runtime env.
+// Never prerender: this layout renders the current session (user menu, admin
+// nav), and a build-time render bakes a session-less demo-mode shell that
+// client navigation then mixes with runtime-rendered segments (the Clerk
+// provider crash of 2026-09-21). Rendering per-request keeps every segment
+// on the same runtime env and the same session.
 export const dynamic = "force-dynamic";
 
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const withAuth = clerkEnabled();
+  const withAuth = authEnabled();
+  const email = await getAuthEmail();
   // The UC1/UC3 cross-app switcher is an internal operator aid, not a
   // customer-facing control — only platform operators see it. (Demo mode with
   // no auth configured is operator-by-definition, so it stays visible there.)
   const showAppSwitcher = await isPlatformAdmin();
-  const body = (
+  return (
     <html lang="en" className={`${montserrat.variable} h-full`}>
       <body className="min-h-full flex flex-col">
         <nav className="ae-navbar">
@@ -58,11 +58,9 @@ export default async function RootLayout({
                 </Link>
               </>
             )}
-            {withAuth && (
+            {withAuth && email && (
               <div className="ml-auto shrink-0">
-                <Show when="signed-in">
-                  <UserButton />
-                </Show>
+                <UserMenu email={email} />
               </div>
             )}
           </div>
@@ -72,5 +70,4 @@ export default async function RootLayout({
       </body>
     </html>
   );
-  return withAuth ? <ClerkProvider>{body}</ClerkProvider> : body;
 }

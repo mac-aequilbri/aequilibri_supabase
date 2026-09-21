@@ -25,13 +25,12 @@ RUN npm ci
 FROM deps AS build
 WORKDIR /app
 COPY . .
-# Clerk publishable key is public by design but must be present at build:
-# Next inlines NEXT_PUBLIC_* into the client bundle.
-ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=""
-ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-# Auth flows stay on our origin (in-app pages), never the hosted portal.
-ENV NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in \
-    NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+# Supabase URL + anon key are public by design but must be present at build:
+# Next inlines NEXT_PUBLIC_* into the client bundle (auth forms, sign-out).
+ARG NEXT_PUBLIC_SUPABASE_URL=""
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=""
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 # Build-time placeholders only — the boot guard warns (not throws) and no
 # page connects at build; real values come from Secrets Manager at runtime.
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build" \

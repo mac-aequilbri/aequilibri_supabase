@@ -22,11 +22,12 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
     "@aws-sdk/client-s3": "^3.1106.0",
-    "@clerk/nextjs": "^7.5.2",
     "@napi-rs/canvas": "^1.0.0",
     "@prisma/client": "^6.19.3",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.116.0",
     "decimal.js": "^10.6.0",
     "geotiff": "^3.0.5",
     "imapflow": "^1.4.3",
