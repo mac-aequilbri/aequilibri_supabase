@@ -1,6 +1,14 @@
 # Auth migration: Clerk → Supabase Auth (AU residency)
 
-**Status:** PLAN — owner decision 2026-09-21.
+**Status:** DONE — decided 2026-09-21, deployed same day, verified and Clerk
+decommissioned 2026-09-22. Owner verified email/password and Google OAuth
+sign-in end-to-end (Google via a Workspace-internal GCP OAuth client;
+provider config in the Supabase dashboard). B-auth-5 executed: CLERK task
+env, terraform variable, and the CLERK_SECRET_KEY secret removed (7-day
+recovery window); owner deletes the Clerk application in their dashboard.
+Production gotcha found during verification: route-handler redirects built
+from `request.url` emit the container's internal hostname behind the ALB —
+/auth/confirm issues RELATIVE Location headers instead.
 **Driver:** hard AU data-residency requirement. Clerk processes user PII in
 the US with no AU region (flagged in aws-deployment-plan §8 from the start).
 Supabase Auth runs inside our existing **Sydney** projects — auth PII becomes

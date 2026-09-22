@@ -13,7 +13,6 @@ locals {
     "DATABASE_URL",         # pooled, aequilibri_app
     "CONTROL_DATABASE_URL", # pooled, aequilibri_app
     "ANTHROPIC_API_KEY",
-    "CLERK_SECRET_KEY", # transition — drop at B-auth-5 (new code never reads it)
     "SUPABASE_SERVICE_ROLE_KEY",
     "PLATFORM_ENCRYPTION_KEY",
     "CRON_SECRET",
