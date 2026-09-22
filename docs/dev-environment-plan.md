@@ -1,6 +1,6 @@
 # Dev environment (separated dev/prod for AWS + Supabase)
 
-**Status:** IN PROGRESS — owner decisions 2026-09-22.
+**Status:** DONE — decided, built, and verified 2026-09-22 (health + auth gate + sign-in confirmed at https://dev.app.aequilibri.com, then scaled to zero). Gotcha for posterity: a deploy job with `environment:` changes the GitHub OIDC sub claim to `environment:<name>` — the CI role trust is environment-pinned now.
 **Driver:** every push to main currently deploys straight to the app the
 client uses. A deployable dev environment takes that risk out before real
 client work lands.
