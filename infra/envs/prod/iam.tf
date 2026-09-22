@@ -120,13 +120,16 @@ data "aws_iam_policy_document" "ci_assume" {
       values   = ["sts.amazonaws.com"]
     }
     condition {
-      # Branch-pinned: only workflows on main (prod) or dev (dev env) of THIS
-      # repo can assume it.
+      # Environment-pinned: deploy jobs declare a GitHub environment, which
+      # changes the OIDC sub from ref:refs/heads/<branch> to
+      # environment:<name> (verified 2026-09-22 — env-less ref subs kept for
+      # any future non-environment job on main).
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
+        var.github_oidc_sub != "" ? replace(var.github_oidc_sub, "ref:refs/heads/main", "environment:prod") : "repo:${var.github_repo}:environment:prod",
+        var.github_oidc_sub != "" ? replace(var.github_oidc_sub, "ref:refs/heads/main", "environment:dev") : "repo:${var.github_repo}:environment:dev",
         var.github_oidc_sub != "" ? var.github_oidc_sub : "repo:${var.github_repo}:ref:refs/heads/main",
-        var.github_oidc_sub != "" ? replace(var.github_oidc_sub, "refs/heads/main", "refs/heads/dev") : "repo:${var.github_repo}:ref:refs/heads/dev",
       ]
     }
   }
