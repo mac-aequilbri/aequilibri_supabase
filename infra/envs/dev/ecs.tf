@@ -1,0 +1,126 @@
+resource "aws_ecs_cluster" "main" {
+  name = "aequilibri-dev"
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+}
+
+resource "aws_cloudwatch_log_group" "app" {
+  name              = "/ecs/aequilibri-dev-app"
+  retention_in_days = 30
+}
+
+locals {
+  ecr_url = data.aws_ecr_repository.app.repository_url
+
+  app_secrets = [
+    for name in local.app_secret_names : {
+      name      = name
+      valueFrom = aws_secretsmanager_secret.app[name].arn
+    }
+  ]
+  migrate_secrets = [
+    for name in local.migrate_secret_names : {
+      name      = name
+      valueFrom = aws_secretsmanager_secret.app[name].arn
+    }
+  ]
+}
+
+resource "aws_ecs_task_definition" "app" {
+  family                   = "aequilibri-dev-app"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 1024
+  memory                   = 2048
+  execution_role_arn       = aws_iam_role.task_execution.arn
+  task_role_arn            = aws_iam_role.app_task.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "aequilibri-dev-app"
+      image     = "${local.ecr_url}:${var.app_image_tag}"
+      essential = true
+      portMappings = [
+        { containerPort = 3000, protocol = "tcp" }
+      ]
+      environment = [
+        { name = "NODE_ENV", value = "production" },
+        { name = "PORT", value = "3000" },
+        { name = "DOCUMENTS_BUCKET", value = aws_s3_bucket.documents.bucket },
+        { name = "AWS_REGION", value = var.aws_region },
+        { name = "NEXT_PUBLIC_SUPABASE_URL", value = var.supabase_url },
+        { name = "NEXT_PUBLIC_SUPABASE_ANON_KEY", value = var.supabase_anon_key },
+        { name = "NEXT_PUBLIC_APP_URL", value = "https://${local.dev_fqdn}" },
+        { name = "PLATFORM_ADMIN_EMAILS", value = var.platform_admin_emails }
+      ]
+      secrets = local.app_secrets
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.app.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "app"
+        }
+      }
+    }
+  ])
+}
+
+resource "aws_ecs_service" "app" {
+  name            = "aequilibri-dev-app"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.app.arn
+  launch_type     = "FARGATE"
+
+  desired_count                      = var.app_desired_count
+  deployment_maximum_percent         = 100
+  deployment_minimum_healthy_percent = 0
+
+  health_check_grace_period_seconds = 60
+  enable_execute_command            = true
+
+  network_configuration {
+    subnets          = aws_subnet.private[*].id
+    security_groups  = [aws_security_group.app.id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app.arn
+    container_name   = "aequilibri-dev-app"
+    container_port   = 3000
+  }
+
+  depends_on = [aws_lb_listener.https]
+}
+
+resource "aws_ecs_task_definition" "migrate" {
+  family                   = "aequilibri-dev-migrate"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 512
+  memory                   = 1024
+  execution_role_arn       = aws_iam_role.task_execution.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "aequilibri-dev-migrate"
+      image     = "${local.ecr_url}:${var.migrate_image_tag}"
+      essential = true
+      environment = [
+        { name = "NODE_ENV", value = "production" }
+      ]
+      secrets = local.migrate_secrets
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.app.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "migrate"
+        }
+      }
+    }
+  ])
+}

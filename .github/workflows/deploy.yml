@@ -16,7 +16,7 @@ name: ci-deploy
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, dev]
   pull_request:
 
 env:
@@ -63,10 +63,16 @@ jobs:
 
   deploy:
     needs: test
-    # Only main, and only once Workstream A has populated the repo variables.
-    if: github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    # main → prod, dev → dev; gated on the deploy role variable existing.
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && vars.AWS_DEPLOY_ROLE_ARN != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # GitHub environment selects the variable set (cluster/service/Supabase
+    # values); dev image tags carry the dev- prefix so the two environments
+    # never share a moving tag.
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+    env:
+      TAG_PREFIX: ${{ github.ref == 'refs/heads/main' && '' || 'dev-' }}
     permissions:
       id-token: write # OIDC — no long-lived AWS keys in GitHub
       contents: read
@@ -85,10 +91,10 @@ jobs:
         run: |
           docker build --build-arg NEXT_PUBLIC_SUPABASE_URL="${{ vars.NEXT_PUBLIC_SUPABASE_URL }}" \
             --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" \
-            --target runner  -t "$REGISTRY/$REPO:${{ github.sha }}" -t "$REGISTRY/$REPO:latest" .
+            --target runner  -t "$REGISTRY/$REPO:${TAG_PREFIX}${{ github.sha }}" -t "$REGISTRY/$REPO:${TAG_PREFIX}latest" .
           docker build --build-arg NEXT_PUBLIC_SUPABASE_URL="${{ vars.NEXT_PUBLIC_SUPABASE_URL }}" \
             --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" \
-            --target migrate -t "$REGISTRY/$REPO:migrate-${{ github.sha }}" -t "$REGISTRY/$REPO:migrate" .
+            --target migrate -t "$REGISTRY/$REPO:${TAG_PREFIX}migrate-${{ github.sha }}" -t "$REGISTRY/$REPO:${TAG_PREFIX}migrate" .
           docker push --all-tags "$REGISTRY/$REPO"
       - name: Run release migrations (one-off ECS task, fail-fast)
         run: |

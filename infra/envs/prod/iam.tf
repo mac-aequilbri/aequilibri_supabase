@@ -120,10 +120,14 @@ data "aws_iam_policy_document" "ci_assume" {
       values   = ["sts.amazonaws.com"]
     }
     condition {
-      # Branch-pinned: only workflows on main of THIS repo can assume it.
+      # Branch-pinned: only workflows on main (prod) or dev (dev env) of THIS
+      # repo can assume it.
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [var.github_oidc_sub != "" ? var.github_oidc_sub : "repo:${var.github_repo}:ref:refs/heads/main"]
+      values = [
+        var.github_oidc_sub != "" ? var.github_oidc_sub : "repo:${var.github_repo}:ref:refs/heads/main",
+        var.github_oidc_sub != "" ? replace(var.github_oidc_sub, "refs/heads/main", "refs/heads/dev") : "repo:${var.github_repo}:ref:refs/heads/dev",
+      ]
     }
   }
 }
@@ -160,14 +164,20 @@ resource "aws_iam_role_policy" "ci_deploy" {
         Resource = aws_ecr_repository.app.arn
       },
       {
-        Effect   = "Allow"
-        Action   = ["ecs:RunTask"]
-        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/aequilibri-migrate:*"
+        Effect = "Allow"
+        Action = ["ecs:RunTask"]
+        Resource = [
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/aequilibri-migrate:*",
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/aequilibri-dev-migrate:*",
+        ]
       },
       {
-        Effect   = "Allow"
-        Action   = ["ecs:UpdateService"]
-        Resource = aws_ecs_service.app.id
+        Effect = "Allow"
+        Action = ["ecs:UpdateService"]
+        Resource = [
+          aws_ecs_service.app.id,
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/aequilibri-dev/aequilibri-dev-app",
+        ]
       },
       {
         Effect   = "Allow"
@@ -175,9 +185,14 @@ resource "aws_iam_role_policy" "ci_deploy" {
         Resource = "*"
       },
       {
-        Effect   = "Allow"
-        Action   = ["iam:PassRole"]
-        Resource = [aws_iam_role.task_execution.arn, aws_iam_role.app_task.arn]
+        Effect = "Allow"
+        Action = ["iam:PassRole"]
+        Resource = [
+          aws_iam_role.task_execution.arn,
+          aws_iam_role.app_task.arn,
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aequilibri-dev-task-execution",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aequilibri-dev-app-task",
+        ]
         Condition = {
           StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" }
         }
