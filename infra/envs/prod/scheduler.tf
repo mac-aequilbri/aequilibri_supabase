@@ -41,6 +41,9 @@ resource "aws_cloudwatch_event_rule" "hourly_scheduler" {
   name                = "${var.name_prefix}-hourly-scheduler"
   description         = "Platform automation tick (top of every hour)"
   schedule_expression = "cron(0 * * * ? *)"
+  # Follows the app: a sleeping prod (desired_count 0) must not collect
+  # hourly failed invocations.
+  state = var.app_desired_count > 0 ? "ENABLED" : "DISABLED"
 }
 
 data "aws_iam_policy_document" "events_assume" {

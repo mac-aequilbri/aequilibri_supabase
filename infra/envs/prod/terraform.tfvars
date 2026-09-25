@@ -1,8 +1,12 @@
 github_repo = "mac-aequilbri/aequilibri_supabase"
 
 # Actual sub claim observed in this repo's OIDC tokens (ID-hardened format).
-github_oidc_sub   = "repo:mac-aequilbri@286524426/aequilibri_supabase@1333867357:ref:refs/heads/main"
-app_desired_count = 1
+github_oidc_sub = "repo:mac-aequilbri@286524426/aequilibri_supabase@1333867357:ref:refs/heads/main"
+# Pre-launch (owner decision 2026-09-25): prod sleeps like dev until the
+# first real client. 0 also DISABLES the hourly scheduler rule and mutes the
+# app-coupled alarms (see scheduler.tf / observability.tf). Wake with:
+#   terraform -chdir=infra/envs/prod apply -var app_desired_count=1
+app_desired_count = 0
 
 # NS delegation live since 2026-08-17 — never apply with this false.
 enable_https = true

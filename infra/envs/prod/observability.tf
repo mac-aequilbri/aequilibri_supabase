@@ -58,6 +58,9 @@ resource "aws_sns_topic_subscription" "alarm_email" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
+  # Muted while prod sleeps (desired_count 0): a target-less ALB 5xxes on
+  # every bot request.
+  actions_enabled     = var.app_desired_count > 0
   alarm_name          = "${var.name_prefix}-alb-5xx"
   alarm_description   = "ALB returned >=5 5xx in 5 minutes"
   namespace           = "AWS/ApplicationELB"
@@ -74,6 +77,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "unhealthy_targets" {
+  actions_enabled     = var.app_desired_count > 0 # muted while prod sleeps
   alarm_name          = "${var.name_prefix}-unhealthy-targets"
   alarm_description   = "App target failing the /api/health check"
   namespace           = "AWS/ApplicationELB"
@@ -95,6 +99,7 @@ resource "aws_cloudwatch_metric_alarm" "unhealthy_targets" {
 # Crash-loop detector. notBreaching while desired_count = 0 (pre-first-deploy);
 # meaningful once the service runs.
 resource "aws_cloudwatch_metric_alarm" "task_count" {
+  actions_enabled     = var.app_desired_count > 0 # muted while prod sleeps (0 running is intended)
   alarm_name          = "${var.name_prefix}-no-running-task"
   alarm_description   = "ECS service has no running task for 5 minutes"
   namespace           = "ECS/ContainerInsights"
