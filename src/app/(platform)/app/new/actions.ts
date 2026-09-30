@@ -10,7 +10,7 @@ import { provisionOrganisation } from "@/services/platform/onboarding";
 const ENGAGEMENT_TYPES: EngagementType[] = ["short_job", "long_project", "ongoing", "seasonal"];
 const AUTHORITIES: AiAuthority[] = ["propose_only", "approve_required", "auto_low_risk"];
 // Built-in verticals — moved here from the retired Airtable template map.
-const VERTICALS = ["construction", "roofing"];
+const VERTICALS = ["construction", "roofing", "legal"];
 
 export async function provisionOrgAction(formData: FormData): Promise<void> {
   const { isPlatformAdmin } = await import("@/lib/platform/org-context");

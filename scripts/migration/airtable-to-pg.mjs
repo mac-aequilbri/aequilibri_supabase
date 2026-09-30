@@ -18,7 +18,8 @@ import { PrismaClient } from "@prisma/client";
 // §2b split: the org registry lives in the CONTROL database now.
 import { PrismaClient as ControlPrismaClient } from "@prisma/control-client";
 import { TABLES, EXCLUDED, REVERSE_STATUS_MAPS } from "./_map.mjs";
-import { envVar, listAll, loadState, saveState, parseArgs } from "./_shared.mjs";
+import { envVar, listAll as airtableListAll, loadState, saveState, parseArgs } from "./_shared.mjs";
+import { archiveTables, makeArchiveListAll } from "./_archive-source.mjs";
 
 const USAGE = "Usage: node scripts/migration/airtable-to-pg.mjs --org <slug> [--base appXXX] [--tables a,b] [--target-url postgres://…] [--execute]";
 const { org, base: baseArg, tables: only, execute } = parseArgs(USAGE);
@@ -42,8 +43,22 @@ if (!targetUrl && orgRow) {
 const prisma = targetUrl ? new PrismaClient({ datasourceUrl: targetUrl }) : new PrismaClient();
 console.log(`target tenant DB: ${targetUrl ?? "(default DATABASE_URL)"}`);
 if (!orgRow) throw new Error(`No PlatOrganisation with slug '${org}' — create/seed the org first.`);
-const baseId = baseArg ?? orgRow.airtableBaseId;
-if (!baseId) throw new Error(`Org '${org}' has no airtableBaseId — pass --base appXXX.`);
+// Source: either the live Airtable base (--base/registry) or, preferred now
+// that Airtable is decommissioned, a Supabase archive project (--archive-ref).
+const archiveIdx = process.argv.indexOf("--archive-ref");
+const archiveRef = archiveIdx > -1 ? process.argv[archiveIdx + 1] : null;
+let listAll;
+let baseId;
+if (archiveRef) {
+  const tableSet = await archiveTables(archiveRef);
+  listAll = makeArchiveListAll(archiveRef, tableSet);
+  baseId = `archive:${archiveRef}`;
+  console.log(`source: Supabase archive ${archiveRef} (${tableSet.size} airtable.* tables)`);
+} else {
+  listAll = airtableListAll;
+  baseId = baseArg ?? orgRow.airtableBaseId;
+  if (!baseId) throw new Error(`Org '${org}' has no airtableBaseId — pass --base appXXX or --archive-ref <ref>.`);
+}
 
 const statePath = `var/migration/${org}-air-to-pg.json`;
 const state = loadState(statePath);

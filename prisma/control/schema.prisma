@@ -179,3 +179,24 @@ model PlatCtlJobCatalog {
   @@index([verticalKey, key])
   @@map("plat_ctl_job_catalog")
 }
+
+// Vertical-specific field re-labelling (the Postgres source for
+// lib/platform/domainLabels getDomainLabels — replaces the retired Airtable
+// DOMAIN_LABELS table). One row per (vertical, Core table, Core field):
+// e.g. legal/JOBS/Job_Name → "Matter". Shared across all orgs of a vertical,
+// so it lives control-plane like the job/report catalogs. Core-field label
+// "_TABLE" re-labels the whole table (tableLabelFor).
+model PlatCtlDomainLabel {
+  id          Int      @id @default(autoincrement())
+  verticalKey String   @map("vertical_key") @db.VarChar(100)
+  coreTable   String   @map("core_table") @db.VarChar(100)
+  coreField   String   @map("core_field") @db.VarChar(200)
+  label       String   @db.VarChar(200)
+  contextNote String   @default("") @map("context_note")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([verticalKey, coreTable, coreField])
+  @@index([verticalKey, isActive])
+  @@map("plat_ctl_domain_label")
+}
