@@ -11,7 +11,7 @@ app_desired_count = 0
 # NS delegation live since 2026-08-17 — never apply with this false.
 enable_https = true
 
-platform_admin_emails = "mac@aequilibri.com"
+platform_admin_emails = "mac@aequilibri.com,claudia@aequilibri.com"
 
 # Supabase Auth on the control project — both values public by design.
 supabase_url      = "https://xpiqrxveestyeaxsebdu.supabase.co"

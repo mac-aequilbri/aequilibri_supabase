@@ -1,4 +1,4 @@
-platform_admin_emails = "mac@aequilibri.com"
+platform_admin_emails = "mac@aequilibri.com,claudia@aequilibri.com"
 
 # Supabase Auth on the control-dev project — both values public by design.
 supabase_url      = "https://scdurerjacanknrmkjmv.supabase.co"
