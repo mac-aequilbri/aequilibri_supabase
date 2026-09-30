@@ -4,6 +4,7 @@
 // hardcoded label.
 
 import { airtableMapFor } from "@/lib/airtable/fieldMaps";
+import { controlDb } from "@/lib/db";
 import type { RecordEditorConfig } from "./recordEditor";
 import type { OrgCtx } from "./types";
 
@@ -12,11 +13,36 @@ export interface DomainLabel {
   contextNote: string;
 }
 
-/** Active labels for the org's vertical, keyed `${Core_Table}.${Core_Field_Label}`.
- *  DOMAIN_LABELS has no Postgres source, so this is always empty — every
- *  caller falls back to its hardcoded label. */
-export async function getDomainLabels(_ctx: OrgCtx): Promise<Map<string, DomainLabel>> {
-  return new Map();
+// Labels are shared by every org of a vertical and change rarely, so cache the
+// per-vertical map briefly rather than re-query on every field render.
+const LABEL_CACHE_TTL_MS = 60_000;
+const labelCache = new Map<string, { at: number; map: Map<string, DomainLabel> }>();
+
+/** Active labels for the org's vertical, keyed `${Core_Table}.${Core_Field_Label}`
+ *  (e.g. "JOBS.Job_Name" → "Matter" for legal). Read from the control-plane
+ *  PlatCtlDomainLabel table; an empty map (the common case for construction,
+ *  which has no rows) means every caller keeps its hardcoded label. */
+export async function getDomainLabels(ctx: OrgCtx): Promise<Map<string, DomainLabel>> {
+  const vertical = ctx.vertical || "";
+  if (!vertical) return new Map();
+  const hit = labelCache.get(vertical);
+  if (hit && Date.now() - hit.at < LABEL_CACHE_TTL_MS) return hit.map;
+
+  const map = new Map<string, DomainLabel>();
+  try {
+    const rows = await controlDb.platCtlDomainLabel.findMany({
+      where: { verticalKey: vertical, isActive: true },
+      select: { coreTable: true, coreField: true, label: true, contextNote: true },
+    });
+    for (const r of rows) {
+      map.set(`${r.coreTable}.${r.coreField}`, { label: r.label, contextNote: r.contextNote || "" });
+    }
+  } catch {
+    // Never break a page render on a labels lookup — fall back to empty.
+    return new Map();
+  }
+  labelCache.set(vertical, { at: Date.now(), map });
+  return map;
 }
 
 /** Overlay domain labels onto a RecordEditorConfig: each field's app key is

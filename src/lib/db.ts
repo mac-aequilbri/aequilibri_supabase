@@ -52,6 +52,7 @@ const CONTROL_MODELS = new Set([
   "platCtlReportCatalog",
   "platCtlTemplateRegistry",
   "platCtlJobCatalog",
+  "platCtlDomainLabel",
 ]);
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -119,6 +120,7 @@ type ControlDelegates = Pick<
   | "platCtlReportCatalog"
   | "platCtlTemplateRegistry"
   | "platCtlJobCatalog"
+  | "platCtlDomainLabel"
 >;
 
 function withControlDispatch<T extends object>(tenant: T, control: ControlPrismaClient) {
