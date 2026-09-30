@@ -35,9 +35,12 @@ const FEATURE_LABELS: Record<string, string> = {
 const VERTICAL_LABELS: Record<string, string> = {
   construction: "Construction (Project Delivery)",
   roofing: "Roofing (PCR Estimation)",
+  legal: "Legal (Matter Management)",
 };
 // Built-in verticals — moved here from the retired Airtable template map.
-const VERTICALS = ["construction", "roofing"];
+// legal reuses the generic project core (jobs=matters) with a domain-label
+// overlay (lib/platform/domainLabels) — no separate schema.
+const VERTICALS = ["construction", "roofing", "legal"];
 
 const ENGAGEMENTS = [
   ["long_project", "Long project (phases, budget vs actual, variations)"],
